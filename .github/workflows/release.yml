@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-12, ubuntu-20.04, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install system dependencies (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ca-certificates xvfb fakeroot git rpm libsecret-1-dev libx11-dev libxkbfile-dev xz-utils xorriso zsync libxss1 libgtk-3-0 libasound2 libicu-dev software-properties-common wget
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '12.16.3'
+
+      - name: Update npm
+        run: npm install --global npm@6.14.8
+
+      - name: Setup Python (Windows)
+        if: startsWith(matrix.os, 'windows')
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.8'
+
+      - name: Bootstrap Environment
+        run: node script/bootstrap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI: true
+
+      - name: Build Atom
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            node script/build --no-bootstrap --compress-artifacts --create-windows-installer
+          elif [ "${{ matrix.os }}" = "macos-12" ]; then
+            node script/build --no-bootstrap --compress-artifacts
+          else
+            node script/build --no-bootstrap --compress-artifacts --create-debian-package --create-rpm-package
+          fi
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifacts to Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          files: |
+            out/atom-*.zip
+            out/atom-*.dmg
+            out/atom-*.deb
+            out/atom-*.rpm
+            out/atom-*.exe
+            out/atom-*.nupkg
+            out/*.zip
+            out/*.dmg
+            out/*.deb
+            out/*.rpm
+            out/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
