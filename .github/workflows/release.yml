@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-12, ubuntu-20.04, windows-latest]
+        os: [macos-12, ubuntu-20.04, windows-2019]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -50,7 +50,7 @@ jobs:
 
       - name: Build Atom
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "${{ matrix.os }}" = "windows-2019" ]; then
             node script/build --no-bootstrap --compress-artifacts --create-windows-installer
           elif [ "${{ matrix.os }}" = "macos-12" ]; then
             node script/build --no-bootstrap --compress-artifacts
