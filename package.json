@@ -14,7 +14,6 @@
   "build": {
     "appId": "com.atom.reborn",
     "productName": "Atomic",
-    "publish": ["github"],
     "mac": {
       "target": ["dmg", "zip"],
       "identity": null
