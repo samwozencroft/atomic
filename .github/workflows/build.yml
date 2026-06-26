@@ -34,11 +34,8 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Build and Publish Release
-        run: npm run build:release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and Package App
+        run: npm run build
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -50,4 +47,25 @@ jobs:
             dist/*.exe
             dist/*.deb
             dist/*.AppImage
-          retention-days: 7
+          retention-days: 1
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly-${{ github.run_number }}
+          name: Atomic Nightly Build #${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: release-artifacts/*
