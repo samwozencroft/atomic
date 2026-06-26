@@ -8,7 +8,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder build"
+    "build": "electron-builder build",
+    "build:release": "electron-builder build --publish always"
   },
   "build": {
     "appId": "com.atom.reborn",

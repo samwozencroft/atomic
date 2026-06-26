@@ -35,9 +35,10 @@ jobs:
         run: npm ci
 
       - name: Build and Publish Release
-        run: npm run build -- --publish always
+        run: npm run build:release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
