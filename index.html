@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Atomic</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <button id="open-folder-btn" class="btn">Open Folder</button>
+            </div>
+            <div id="file-tree" class="file-tree"></div>
+        </div>
+        <div class="main-content">
+            <div class="tabs-container" id="tabs"></div>
+            <div id="editor-container"></div>
+            <div id="welcome-screen" class="welcome-screen active">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/e/e2/Atom_1.0_icon.png" alt="Atomic Logo" class="welcome-logo">
+                <h1>Atomic</h1>
+                <p>A lightweight, modern text editor built on Electron 30 and Node 20.</p>
+                <div class="welcome-actions">
+                    <button class="btn" onclick="document.getElementById('open-folder-btn').click()">Open a Folder</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Context Menu -->
+    <div id="context-menu">
+        <div class="context-menu-item" id="ctx-new-file">New File</div>
+        <div class="context-menu-item" id="ctx-new-folder">New Folder</div>
+        <div class="context-menu-item" id="ctx-rename">Rename</div>
+        <div class="context-menu-item" id="ctx-delete" style="color: #e06c75;">Delete</div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <script src="renderer.js"></script>
+</body>
+</html>
