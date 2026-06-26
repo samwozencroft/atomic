@@ -1,6 +1,10 @@
 {
   "name": "atomic",
   "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samwozencroft/atomic.git"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -9,6 +13,7 @@
   "build": {
     "appId": "com.atom.reborn",
     "productName": "Atomic",
+    "publish": ["github"],
     "mac": {
       "target": ["dmg", "zip"],
       "identity": null
