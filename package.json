@@ -21,9 +21,12 @@
     }
   },
   "keywords": [],
-  "author": "",
+  "author": {
+    "name": "Samuel Wozencroft",
+    "email": "samuelwozencroft@outlook.com"
+  },
   "license": "ISC",
-  "description": "",
+  "description": "A lightweight, modern text editor built on Electron 30 and Node 20.",
   "devDependencies": {
     "electron": "^30.0.0",
     "electron-builder": "^26.15.3"
