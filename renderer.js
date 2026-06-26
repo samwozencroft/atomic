@@ -246,3 +246,36 @@ function renderTabs() {
         container.appendChild(el);
     });
 }
+
+// Auto Updater UI Logic
+const updatePopup = document.getElementById('update-popup');
+const updateMessage = document.getElementById('update-message');
+const updateRestartBtn = document.getElementById('update-restart-btn');
+
+window.electronAPI.onUpdateAvailable(() => {
+  updatePopup.classList.remove('hidden');
+  updateMessage.textContent = "A new update is available. Downloading now...";
+});
+
+window.electronAPI.onUpdateDownloaded(() => {
+  updateMessage.textContent = "Update Downloaded. It will be installed on restart.";
+  updateRestartBtn.classList.remove('hidden');
+});
+
+updateRestartBtn.addEventListener('click', () => {
+  window.electronAPI.restartApp();
+});
+
+// Sidebar Toggle Logic
+document.getElementById('toggle-sidebar-btn').addEventListener('click', () => {
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar.style.display === 'none') {
+    sidebar.style.display = 'flex';
+  } else {
+    sidebar.style.display = 'none';
+  }
+  // Trigger Monaco editor resize
+  if (editor) {
+    setTimeout(() => editor.layout(), 10);
+  }
+});

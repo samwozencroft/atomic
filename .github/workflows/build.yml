@@ -47,6 +47,8 @@ jobs:
             dist/*.exe
             dist/*.deb
             dist/*.AppImage
+            dist/*.yml
+            dist/*.blockmap
           retention-days: 1
 
   release:

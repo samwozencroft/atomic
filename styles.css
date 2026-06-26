@@ -130,12 +130,40 @@ body {
   position: relative;
 }
 
-.tabs-container {
+.topbar {
   display: flex;
   background-color: var(--bg-darker);
   height: 35px;
   border-bottom: 1px solid var(--bg-darkest);
+}
+
+.tabs-container {
+  display: flex;
   overflow-x: auto;
+  flex-grow: 1;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.icon-btn:hover {
+  background-color: var(--hover-bg);
+  color: var(--text-normal);
 }
 
 .tab {
@@ -170,7 +198,7 @@ body {
 
 .welcome-screen {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 35px; left: 0; right: 0; bottom: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -233,8 +261,51 @@ body {
   padding: 8px 15px;
   cursor: pointer;
   color: var(--text-normal);
+  cursor: pointer;
 }
 
 .context-menu-item:hover {
-  background-color: var(--menu-hover);
+  background-color: var(--accent-blue);
+  color: #ffffff;
+}
+
+/* Update Popup */
+#update-popup {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background-color: var(--bg-dark);
+  border: 1px solid var(--accent-blue);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  border-radius: 8px;
+  padding: 16px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-normal);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  transition: opacity 0.3s ease;
+}
+
+#update-popup.hidden {
+  display: none;
+}
+
+#update-restart-btn {
+  background-color: var(--accent-blue);
+  color: #fff;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+#update-restart-btn:hover {
+  background-color: #4da3e8;
+}
+
+#update-restart-btn.hidden {
+  display: none;
 }
