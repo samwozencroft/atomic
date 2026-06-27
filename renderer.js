@@ -298,3 +298,44 @@ document.getElementById('toggle-sidebar-btn').addEventListener('click', () => {
     setTimeout(() => editor.layout(), 10);
   }
 });
+
+// Settings Modal and Stats Toggle Logic
+const settingsCog = document.getElementById('settings-cog');
+const settingsModal = document.getElementById('settings-modal');
+const closeSettingsBtn = document.getElementById('close-settings');
+const toggleInsights = document.getElementById('toggle-insights');
+const systemStats = document.getElementById('system-stats');
+
+// Load preference
+const showInsights = localStorage.getItem('atomic_show_insights') !== 'false';
+toggleInsights.checked = showInsights;
+if (!showInsights) systemStats.style.display = 'none';
+
+function updateInsightsVisibility(show) {
+  systemStats.style.display = show ? 'block' : 'none';
+  toggleInsights.checked = show;
+  localStorage.setItem('atomic_show_insights', show);
+}
+
+settingsCog.addEventListener('click', () => {
+  settingsModal.classList.remove('hidden');
+});
+
+closeSettingsBtn.addEventListener('click', () => {
+  settingsModal.classList.add('hidden');
+});
+
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) {
+    settingsModal.classList.add('hidden');
+  }
+});
+
+toggleInsights.addEventListener('change', (e) => {
+  updateInsightsVisibility(e.target.checked);
+});
+
+systemStats.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  updateInsightsVisibility(false);
+});

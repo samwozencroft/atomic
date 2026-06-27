@@ -296,8 +296,96 @@ body {
   z-index: 999;
 }
 
+#status-right {
+  display: flex;
+  align-items: center;
+}
+
 #status-right span, #status-left span {
   margin-left: 15px;
+}
+
+#settings-cog {
+  margin-right: 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+#settings-cog:hover {
+  opacity: 1;
+}
+
+/* Settings Modal */
+#settings-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+}
+
+#settings-modal.hidden {
+  display: none;
+}
+
+.settings-content {
+  background-color: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  width: 400px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-darker);
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+.settings-nav h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+#close-settings {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+
+#close-settings:hover {
+  color: var(--text-normal);
+}
+
+.settings-body {
+  padding: 20px;
+}
+
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-normal);
+  font-size: 13px;
 }
 
 /* Update Popup */
