@@ -217,14 +217,50 @@ document.getElementById('ctx-delete').addEventListener('click', async () => {
 
 function getLanguageFromFilename(filename) {
     const ext = filename.split('.').pop().toLowerCase();
+    
+    // Check exact filenames first
+    const exactMatches = {
+        'dockerfile': 'dockerfile',
+        'makefile': 'shell',
+        '.gitignore': 'plaintext',
+        '.env': 'shell'
+    };
+    
+    if (exactMatches[filename.toLowerCase()]) {
+        return exactMatches[filename.toLowerCase()];
+    }
+
+    // Then check extensions
     const map = {
         'js': 'javascript',
+        'jsx': 'javascript',
+        'ts': 'typescript',
+        'tsx': 'typescript',
         'html': 'html',
         'css': 'css',
+        'scss': 'scss',
+        'less': 'less',
         'json': 'json',
         'md': 'markdown',
         'py': 'python',
-        'ts': 'typescript'
+        'go': 'go',
+        'java': 'java',
+        'c': 'c',
+        'cpp': 'cpp',
+        'cs': 'csharp',
+        'php': 'php',
+        'rb': 'ruby',
+        'rs': 'rust',
+        'sh': 'shell',
+        'bash': 'shell',
+        'zsh': 'shell',
+        'yaml': 'yaml',
+        'yml': 'yaml',
+        'xml': 'xml',
+        'sql': 'sql',
+        'graphql': 'graphql',
+        'ini': 'ini',
+        'bat': 'bat'
     };
     return map[ext] || 'plaintext';
 }
