@@ -64,12 +64,8 @@ async function saveCurrentFile() {
     isSaving = false;
 }
 
-window.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        e.preventDefault();
-        saveCurrentFile();
-    }
-});
+// Native Menu handles Cmd+S now
+
 
 document.getElementById('open-folder-btn').addEventListener('click', async () => {
     const dirPath = await window.electronAPI.openDirectory();
@@ -454,3 +450,45 @@ if (toggleWarnClose) {
     localStorage.setItem('atomic_warn_close', e.target.checked);
   });
 }
+
+// Native Menu Listeners
+window.electronAPI.onMenuAction(async (action) => {
+  switch (action) {
+    case 'open-file':
+      const file = await window.electronAPI.openFile();
+      if (file) {
+        document.getElementById('welcome-screen').classList.remove('active');
+        document.getElementById('editor-container').style.display = 'block';
+        openFile(file.path, file.name);
+      }
+      break;
+    case 'open-folder':
+      document.getElementById('open-folder-btn').click();
+      break;
+    case 'save':
+      saveCurrentFile();
+      break;
+    case 'close-active':
+      if (currentFilePath) {
+        const tabCloseBtn = document.querySelector(`.tab[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"] .tab-close`);
+        if (tabCloseBtn) tabCloseBtn.click();
+      }
+      break;
+    case 'close-others':
+      if (currentFilePath) {
+        const tabsToClose = openTabs.filter(t => t.path !== currentFilePath);
+        tabsToClose.forEach(t => {
+          const btn = document.querySelector(`.tab[data-path="${t.path.replace(/\\/g, '\\\\')}"] .tab-close`);
+          if (btn) btn.click();
+        });
+      }
+      break;
+    case 'close-all':
+      const allTabs = [...openTabs];
+      allTabs.forEach(t => {
+        const btn = document.querySelector(`.tab[data-path="${t.path.replace(/\\/g, '\\\\')}"] .tab-close`);
+        if (btn) btn.click();
+      });
+      break;
+  }
+});

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSystemStats: () => ipcRenderer.invoke('app:getSystemStats'),
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
+  openFile: () => ipcRenderer.invoke('dialog:openFile'),
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),
   readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
@@ -13,5 +14,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deletePath: (targetPath) => ipcRenderer.invoke('fs:delete', targetPath),
   onUpdateAvailable: (callback) => ipcRenderer.on('update_available', (_event, ...args) => callback(...args)),
   onUpdateDownloaded: (callback) => ipcRenderer.on('update_downloaded', (_event, ...args) => callback(...args)),
-  restartApp: () => ipcRenderer.send('restart_app')
+  restartApp: () => ipcRenderer.send('restart_app'),
+  onMenuAction: (callback) => ipcRenderer.on('menu:action', (_event, action) => callback(action))
 });
