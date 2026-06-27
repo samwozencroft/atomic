@@ -1,6 +1,6 @@
 {
   "name": "atomic",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/samwozencroft/atomic.git"
@@ -18,7 +18,10 @@
     ],
     "mac": {
       "icon": "build/icon.png",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "identity": null
     },
     "win": {
