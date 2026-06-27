@@ -97,7 +97,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump-version.outputs.new_version || format('nightly-{0}', github.run_number) }}
-          name: Atomic ${{ needs.bump-version.outputs.new_version || format('Nightly Build #{0}', github.run_number) }}
+          name: "Atomic ${{ needs.bump-version.outputs.new_version || format('Nightly Build #{0}', github.run_number) }}"
           draft: false
           prerelease: false
           files: release-artifacts/*
