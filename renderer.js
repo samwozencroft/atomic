@@ -451,6 +451,13 @@ if (toggleWarnClose) {
   });
 }
 
+const reportIssueBtn = document.getElementById('report-issue-btn');
+if (reportIssueBtn) {
+  reportIssueBtn.addEventListener('click', () => {
+    window.electronAPI.reportIssue();
+  });
+}
+
 // Native Menu Listeners
 window.electronAPI.onMenuAction(async (action) => {
   switch (action) {

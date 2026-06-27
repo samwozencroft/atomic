@@ -162,6 +162,10 @@ ipcMain.on('restart_app', () => {
   }
 });
 
+ipcMain.on('app:reportIssue', () => {
+  require('electron').shell.openExternal('https://github.com/samwozencroft/atomic/issues');
+});
+
 ipcMain.handle('app:getVersion', () => {
   return app.getVersion();
 });
