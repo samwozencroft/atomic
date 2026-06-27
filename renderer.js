@@ -48,18 +48,32 @@ require(['vs/editor/editor.main'], function() {
 });
 
 async function saveCurrentFile() {
-    if (!currentFilePath) return;
+    if (!currentFilePath || isSaving) return;
     
     isSaving = true;
     const content = editor.getValue();
-    await window.electronAPI.writeFile(currentFilePath, content);
+    const success = await window.electronAPI.writeFile(currentFilePath, content);
     
-    modifiedFiles.delete(currentFilePath);
-    renderTabs();
-    
-    if (currentWorkspace) {
-        const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
-        if (node) node.classList.remove('is-modified');
+    if (success) {
+        modifiedFiles.delete(currentFilePath);
+        
+        // Remove .is-modified visual indicator from tree
+        if (currentWorkspace) {
+            const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+            if (node) node.classList.remove('is-modified');
+        }
+        
+        // Remove dirty indicator from tab
+        const tab = openTabs.find(t => t.path === currentFilePath);
+        if (tab) {
+            const tabEl = document.querySelector(`.tab[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+            if (tabEl) tabEl.classList.remove('is-modified');
+        }
+        
+        // Live reload if custom theme
+        if (currentFilePath.endsWith('custom-theme.css') && localStorage.getItem('atomic_theme') === 'custom') {
+            applyTheme('custom');
+        }
     }
     isSaving = false;
 }
@@ -495,13 +509,65 @@ if (reportIssueBtn) {
 }
 
 // Theme Handling
-const themeSelector = document.getElementById('theme-selector');
+const themeCards = document.querySelectorAll('.theme-card');
+const resetCustomBtn = document.getElementById('reset-custom-theme');
 const currentThemeSetting = localStorage.getItem('atomic_theme') || 'dark';
-if (themeSelector) {
-  themeSelector.value = currentThemeSetting;
-  themeSelector.addEventListener('change', (e) => {
-    localStorage.setItem('atomic_theme', e.target.value);
-    applyTheme(e.target.value);
+
+function updateActiveThemeCard(val) {
+  themeCards.forEach(card => {
+    if (card.dataset.value === val) {
+      card.classList.add('active');
+    } else {
+      card.classList.remove('active');
+    }
+  });
+  if (val === 'custom') {
+    resetCustomBtn.classList.add('visible');
+  } else {
+    resetCustomBtn.classList.remove('visible');
+  }
+}
+
+updateActiveThemeCard(currentThemeSetting);
+
+themeCards.forEach(card => {
+  card.addEventListener('click', async () => {
+    const val = card.dataset.value;
+    localStorage.setItem('atomic_theme', val);
+    updateActiveThemeCard(val);
+    await applyTheme(val);
+    
+    if (val === 'custom') {
+      const customPath = await window.electronAPI.getCustomThemePath();
+      document.getElementById('welcome-screen').classList.remove('active');
+      document.getElementById('editor-container').style.display = 'block';
+      openFile(customPath, 'custom-theme.css');
+      document.getElementById('settings-modal').classList.add('hidden');
+    }
+  });
+});
+
+if (resetCustomBtn) {
+  resetCustomBtn.addEventListener('click', async () => {
+    await window.electronAPI.resetCustomTheme();
+    if (localStorage.getItem('atomic_theme') === 'custom') {
+      await applyTheme('custom');
+      
+      // If custom-theme.css is currently open in the editor, we need to refresh the editor's contents
+      const customPath = await window.electronAPI.getCustomThemePath();
+      if (currentFilePath === customPath) {
+        const customCss = await window.electronAPI.readFile(customPath);
+        isSettingValue = true;
+        editor.setValue(customCss || '');
+        isSettingValue = false;
+        
+        modifiedFiles.delete(currentFilePath);
+        const tabEl = document.querySelector(`.tab[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+        if (tabEl) tabEl.classList.remove('is-modified');
+        const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+        if (node) node.classList.remove('is-modified');
+      }
+    }
   });
 }
 
@@ -511,12 +577,24 @@ async function applyTheme(setting) {
     actualTheme = await window.electronAPI.getNativeTheme();
   }
   
-  if (actualTheme === 'light') {
-    document.body.dataset.theme = 'light';
-    if (window.monaco) monaco.editor.setTheme('vs');
+  const customStyleTag = document.getElementById('custom-theme-style');
+  
+  if (setting === 'custom') {
+    document.body.dataset.theme = 'custom';
+    await window.electronAPI.initCustomTheme();
+    const customPath = await window.electronAPI.getCustomThemePath();
+    const customCss = await window.electronAPI.readFile(customPath);
+    if (customCss) customStyleTag.textContent = customCss;
+    if (window.monaco) monaco.editor.setTheme('atom-one-dark'); // Base theme for custom
   } else {
-    document.body.removeAttribute('data-theme');
-    if (window.monaco) monaco.editor.setTheme('atom-one-dark');
+    customStyleTag.textContent = ''; // Clear custom styles
+    if (actualTheme === 'light') {
+      document.body.dataset.theme = 'light';
+      if (window.monaco) monaco.editor.setTheme('vs');
+    } else {
+      document.body.removeAttribute('data-theme');
+      if (window.monaco) monaco.editor.setTheme('atom-one-dark');
+    }
   }
 }
 

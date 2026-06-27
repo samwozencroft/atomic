@@ -18,5 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   reportIssue: () => ipcRenderer.send('app:reportIssue'),
   onMenuAction: (callback) => ipcRenderer.on('menu:action', (_event, action) => callback(action)),
   getNativeTheme: () => ipcRenderer.invoke('app:getNativeTheme'),
-  onThemeUpdated: (callback) => ipcRenderer.on('theme_updated', () => callback())
+  onThemeUpdated: (callback) => ipcRenderer.on('theme_updated', () => callback()),
+  getCustomThemePath: () => ipcRenderer.invoke('app:getCustomThemePath'),
+  initCustomTheme: () => ipcRenderer.invoke('app:initCustomTheme'),
+  resetCustomTheme: () => ipcRenderer.invoke('app:resetCustomTheme')
 });

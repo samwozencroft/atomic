@@ -174,6 +174,68 @@ ipcMain.handle('app:getNativeTheme', () => {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 });
 
+ipcMain.handle('app:getCustomThemePath', () => {
+  return path.join(app.getPath('userData'), 'custom-theme.css');
+});
+
+ipcMain.handle('app:initCustomTheme', async () => {
+  const themePath = path.join(app.getPath('userData'), 'custom-theme.css');
+  try {
+    await fs.access(themePath);
+  } catch {
+    const template = `/* Atomic Custom Theme */
+/* Modify these variables to customize your editor's appearance */
+/* Press Cmd+S to see your changes instantly applied */
+
+[data-theme="custom"] {
+  --bg-dark: #282c34;
+  --bg-darker: #21252b;
+  --bg-darkest: #181a1f;
+  --text-normal: #abb2bf;
+  --text-muted: #5c6370;
+  --border-color: #181a1f;
+  --accent-blue: #61afef;
+  --accent-purple: #c678dd;
+  --hover-bg: #2c313a;
+  --active-bg: #323842;
+  --tab-bg: #21252b;
+  --tab-active-bg: #282c34;
+  --menu-bg: #2c313a;
+  --menu-hover: #3e4451;
+}
+`;
+    await fs.writeFile(themePath, template, 'utf-8');
+  }
+  return true;
+});
+
+ipcMain.handle('app:resetCustomTheme', async () => {
+  const themePath = path.join(app.getPath('userData'), 'custom-theme.css');
+  const template = `/* Atomic Custom Theme */
+/* Modify these variables to customize your editor's appearance */
+/* Press Cmd+S to see your changes instantly applied */
+
+[data-theme="custom"] {
+  --bg-dark: #282c34;
+  --bg-darker: #21252b;
+  --bg-darkest: #181a1f;
+  --text-normal: #abb2bf;
+  --text-muted: #5c6370;
+  --border-color: #181a1f;
+  --accent-blue: #61afef;
+  --accent-purple: #c678dd;
+  --hover-bg: #2c313a;
+  --active-bg: #323842;
+  --tab-bg: #21252b;
+  --tab-active-bg: #282c34;
+  --menu-bg: #2c313a;
+  --menu-hover: #3e4451;
+}
+`;
+  await fs.writeFile(themePath, template, 'utf-8');
+  return true;
+});
+
 app.whenReady().then(() => {
   createWindow();
 

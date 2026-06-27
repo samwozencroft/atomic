@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>Atomic</title>
     <link rel="stylesheet" href="styles.css">
+  <style id="custom-theme-style"></style>
 </head>
 <body>
     <div class="app-container">
@@ -66,13 +67,27 @@
             <label for="toggle-insights">CPU and Memory Insights</label>
             <input type="checkbox" id="toggle-insights" checked>
           </div>
-          <div class="setting-item" style="margin-top: 15px;">
-            <label for="theme-selector">Theme</label>
-            <select id="theme-selector" style="background: var(--bg-darker); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px;">
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-              <option value="system">System</option>
-            </select>
+          <div class="setting-item" style="margin-top: 15px; display: block; text-align: center;">
+            <label style="display: block; margin-bottom: 5px;">Theme</label>
+            <div class="theme-cards">
+              <div class="theme-card-container">
+                <div class="theme-card" data-value="dark"></div>
+                <span class="theme-card-label">Dark</span>
+              </div>
+              <div class="theme-card-container">
+                <div class="theme-card" data-value="light"></div>
+                <span class="theme-card-label">Light</span>
+              </div>
+              <div class="theme-card-container">
+                <div class="theme-card" data-value="system"></div>
+                <span class="theme-card-label">System</span>
+              </div>
+              <div class="theme-card-container">
+                <div class="theme-card" data-value="custom"></div>
+                <span class="theme-card-label">Custom</span>
+                <span id="reset-custom-theme">Reset</span>
+              </div>
+            </div>
           </div>
           <div class="setting-item" style="margin-top: 15px;">
             <label for="toggle-warn-close">Warn on closing unsaved files</label>
