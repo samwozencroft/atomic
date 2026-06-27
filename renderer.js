@@ -109,10 +109,32 @@ require(['vs/editor/editor.main'], function() {
 });
 
 async function saveCurrentFile() {
-    const activePath = activeEditorPane === 'left' ? currentFilePath : currentFilePathRight;
+    let activePath = activeEditorPane === 'left' ? currentFilePath : currentFilePathRight;
     const activeEd = activeEditorPane === 'left' ? editor : editorRight;
 
-    if (!activePath || isSaving) return;
+    if (isSaving) return;
+    
+    if (!activePath) {
+        // "New File" flow
+        const defaultPath = currentWorkspace ? currentWorkspace + '/Untitled' : 'Untitled';
+        const newPath = await window.electronAPI.showSaveDialog(defaultPath);
+        if (!newPath) return; // user canceled
+        activePath = newPath;
+        
+        // Add to tabs so it's formally open
+        const filename = newPath.split('/').pop();
+        if (activeEditorPane === 'left') {
+            currentFilePath = newPath;
+            openTabsLeft.push({ path: newPath, name: filename });
+        } else {
+            currentFilePathRight = newPath;
+            openTabsRight.push({ path: newPath, name: filename });
+        }
+        
+        // Update language model
+        const lang = getLanguageFromFilename(filename);
+        monaco.editor.setModelLanguage(activeEd.getModel(), lang);
+    }
     
     isSaving = true;
     const content = activeEd.getValue();
@@ -128,17 +150,27 @@ async function saveCurrentFile() {
         }
         
         // Remove dirty indicator from tab
-        const tab = [...openTabsLeft, ...openTabsRight].find(t => t.path === currentFilePath);
+        const tab = [...openTabsLeft, ...openTabsRight].find(t => t.path === activePath);
         if (tab) {
-            const tabEl = document.querySelector(`.tab[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+            const tabEl = document.querySelector(`.tab[data-path="${activePath.replace(/\\/g, '\\\\')}"]`);
             if (tabEl) tabEl.classList.remove('is-modified');
         }
         
         // Live reload if custom theme
-        if (currentFilePath.endsWith('custom-theme.css') && localStorage.getItem('atomic_theme') === 'custom') {
+        if (activePath.endsWith('custom-theme.css') && localStorage.getItem('atomic_theme') === 'custom') {
             applyTheme('custom');
         }
+        
+        // Reload tree to show newly saved file if it's in workspace
+        if (currentWorkspace && activePath.startsWith(currentWorkspace)) {
+            loadDirectory(currentWorkspace);
+        }
+        
+        renderTabs();
+    } else {
+        alert('Failed to save file');
     }
+    
     isSaving = false;
 }
 
@@ -524,6 +556,15 @@ function renderTabs() {
         
         const tabsArr = pane === 'left' ? openTabsLeft : openTabsRight;
         const currentActivePath = pane === 'left' ? currentFilePath : currentFilePathRight;
+        
+        if (tabsArr.length === 0 && pane === 'left') {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'tab active';
+            placeholder.innerHTML = `<span>New File</span>`;
+            placeholder.style.opacity = '0.5';
+            placeholder.style.pointerEvents = 'none';
+            container.appendChild(placeholder);
+        }
         
         tabsArr.forEach(tab => {
             const el = document.createElement('div');

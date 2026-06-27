@@ -23,5 +23,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   initCustomTheme: () => ipcRenderer.invoke('app:initCustomTheme'),
   resetCustomTheme: () => ipcRenderer.invoke('app:resetCustomTheme'),
   openInFinder: (filePath) => ipcRenderer.invoke('fs:openInFinder', filePath),
-  copyFile: (filePath) => ipcRenderer.invoke('fs:copy', filePath)
+  copyFile: (filePath) => ipcRenderer.invoke('fs:copy', filePath),
+  showSaveDialog: (defaultPath) => ipcRenderer.invoke('dialog:showSaveDialog', defaultPath)
 });

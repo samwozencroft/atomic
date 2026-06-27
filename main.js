@@ -399,3 +399,11 @@ ipcMain.handle('app:getSystemStats', () => {
 
   return { cpu: cpuPercent, memory: memPercent };
 });
+
+ipcMain.handle('dialog:showSaveDialog', async (event, defaultPath) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath,
+    properties: ['showOverwriteConfirmation']
+  });
+  return result.canceled ? null : result.filePath;
+});
