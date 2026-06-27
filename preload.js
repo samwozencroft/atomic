@@ -16,5 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateDownloaded: (callback) => ipcRenderer.on('update_downloaded', (_event, ...args) => callback(...args)),
   restartApp: () => ipcRenderer.send('restart_app'),
   reportIssue: () => ipcRenderer.send('app:reportIssue'),
-  onMenuAction: (callback) => ipcRenderer.on('menu:action', (_event, action) => callback(action))
+  onMenuAction: (callback) => ipcRenderer.on('menu:action', (_event, action) => callback(action)),
+  getNativeTheme: () => ipcRenderer.invoke('app:getNativeTheme'),
+  onThemeUpdated: (callback) => ipcRenderer.on('theme_updated', () => callback())
 });

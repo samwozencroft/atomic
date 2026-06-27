@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
@@ -170,8 +170,18 @@ ipcMain.handle('app:getVersion', () => {
   return app.getVersion();
 });
 
+ipcMain.handle('app:getNativeTheme', () => {
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+});
+
 app.whenReady().then(() => {
   createWindow();
+
+  nativeTheme.on('updated', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('theme_updated');
+    }
+  });
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -458,6 +458,42 @@ if (reportIssueBtn) {
   });
 }
 
+// Theme Handling
+const themeSelector = document.getElementById('theme-selector');
+const currentThemeSetting = localStorage.getItem('atomic_theme') || 'dark';
+if (themeSelector) {
+  themeSelector.value = currentThemeSetting;
+  themeSelector.addEventListener('change', (e) => {
+    localStorage.setItem('atomic_theme', e.target.value);
+    applyTheme(e.target.value);
+  });
+}
+
+async function applyTheme(setting) {
+  let actualTheme = setting;
+  if (setting === 'system') {
+    actualTheme = await window.electronAPI.getNativeTheme();
+  }
+  
+  if (actualTheme === 'light') {
+    document.body.dataset.theme = 'light';
+    if (window.monaco) monaco.editor.setTheme('vs');
+  } else {
+    document.body.removeAttribute('data-theme');
+    if (window.monaco) monaco.editor.setTheme('atom-one-dark');
+  }
+}
+
+// Initial theme application
+applyTheme(currentThemeSetting);
+
+window.electronAPI.onThemeUpdated(() => {
+  const setting = localStorage.getItem('atomic_theme') || 'dark';
+  if (setting === 'system') {
+    applyTheme('system');
+  }
+});
+
 // Native Menu Listeners
 window.electronAPI.onMenuAction(async (action) => {
   switch (action) {

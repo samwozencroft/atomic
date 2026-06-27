@@ -16,6 +16,23 @@
   --menu-hover: #3e4451;
 }
 
+[data-theme="light"] {
+  --bg-dark: #fafafa;
+  --bg-darker: #f0f0f0;
+  --bg-darkest: #e5e5e5;
+  --text-normal: #383a42;
+  --text-muted: #a0a1a7;
+  --border-color: #e5e5e5;
+  --accent-blue: #4078f2;
+  --accent-purple: #a626a4;
+  --hover-bg: #e5e5e5;
+  --active-bg: #d7d7d7;
+  --tab-bg: #f0f0f0;
+  --tab-active-bg: #fafafa;
+  --menu-bg: #ffffff;
+  --menu-hover: #e5e5e5;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
