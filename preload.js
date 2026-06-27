@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getVersion: () => ipcRenderer.invoke('app:getVersion'),
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),
   readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),

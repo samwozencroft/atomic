@@ -36,6 +36,10 @@ ipcMain.on('restart_app', () => {
   autoUpdater.quitAndInstall();
 });
 
+ipcMain.handle('app:getVersion', () => {
+  return app.getVersion();
+});
+
 app.whenReady().then(() => {
   createWindow();
 

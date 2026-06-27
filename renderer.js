@@ -247,6 +247,11 @@ function renderTabs() {
     });
 }
 
+// Initialize App Version
+window.electronAPI.getVersion().then(version => {
+  document.getElementById('app-version-display').textContent = `Version ${version}`;
+});
+
 // Auto Updater UI Logic
 const updatePopup = document.getElementById('update-popup');
 const updateMessage = document.getElementById('update-message');

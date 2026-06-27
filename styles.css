@@ -234,6 +234,14 @@ body {
   margin-bottom: 30px;
 }
 
+.welcome-version {
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-size: 12px;
+  position: absolute;
+  bottom: 20px;
+}
+
 .welcome-actions .btn {
   width: auto;
   padding: 10px 20px;
