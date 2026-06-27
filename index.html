@@ -66,6 +66,32 @@
             <label for="toggle-insights">CPU and Memory Insights</label>
             <input type="checkbox" id="toggle-insights" checked>
           </div>
+          <div class="setting-item" style="margin-top: 15px;">
+            <label for="toggle-warn-close">Warn on closing unsaved files</label>
+            <input type="checkbox" id="toggle-warn-close" checked>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unsaved Changes Warning Modal -->
+    <div id="unsaved-modal" class="hidden">
+      <div class="settings-content" style="width: 350px;">
+        <div class="settings-nav" style="border-bottom: none;">
+          <h3>Unsaved Changes</h3>
+        </div>
+        <div class="settings-body" style="padding-top: 5px;">
+          <p style="color: var(--text-normal); font-size: 14px; margin-top: 0;">Do you want to save the changes you made to this file?</p>
+          <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 20px;">Your changes will be lost if you don't save them.</p>
+          <div class="setting-item" style="margin-bottom: 20px;">
+            <label for="unsaved-dont-remind">Don't remind me again</label>
+            <input type="checkbox" id="unsaved-dont-remind">
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button id="unsaved-cancel" class="btn" style="background: var(--bg-dark); color: var(--text-normal); border: 1px solid var(--border-color);">Cancel</button>
+            <button id="unsaved-discard" class="btn" style="background: #e06c75; color: #fff; border: none;">Discard</button>
+            <button id="unsaved-save" class="btn" style="background: var(--accent-blue); color: #fff; border: none;">Save</button>
+          </div>
         </div>
       </div>
     </div>

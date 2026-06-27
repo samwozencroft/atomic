@@ -318,8 +318,9 @@ body {
   opacity: 1;
 }
 
-/* Settings Modal */
-#settings-modal {
+/* Settings & Unsaved Modals */
+#settings-modal,
+#unsaved-modal {
   position: fixed;
   top: 0;
   left: 0;
@@ -332,7 +333,8 @@ body {
   z-index: 2000;
 }
 
-#settings-modal.hidden {
+#settings-modal.hidden,
+#unsaved-modal.hidden {
   display: none;
 }
 
@@ -344,6 +346,13 @@ body {
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
+}
+
+.is-modified::after {
+  content: " •";
+  color: #e06c75;
+  font-weight: bold;
+  font-size: 1.2em;
 }
 
 .settings-nav {

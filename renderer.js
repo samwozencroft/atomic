@@ -3,6 +3,9 @@ let currentFilePath = null;
 let openTabs = [];
 let currentWorkspace = null;
 
+const modifiedFiles = new Set();
+let isSaving = false;
+
 require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
 
 require(['vs/editor/editor.main'], function() {
@@ -31,8 +34,41 @@ require(['vs/editor/editor.main'], function() {
     });
 
     editor.onDidChangeModelContent(() => {
-        // Handle unsaved changes logic here if needed
+        if (!currentFilePath || isSaving || isSettingValue) return;
+        if (!modifiedFiles.has(currentFilePath)) {
+            modifiedFiles.add(currentFilePath);
+            renderTabs();
+            // Update tree view as well
+            if (currentWorkspace) {
+                const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+                if (node) node.classList.add('is-modified');
+            }
+        }
     });
+});
+
+async function saveCurrentFile() {
+    if (!currentFilePath) return;
+    
+    isSaving = true;
+    const content = editor.getValue();
+    await window.electronAPI.writeFile(currentFilePath, content);
+    
+    modifiedFiles.delete(currentFilePath);
+    renderTabs();
+    
+    if (currentWorkspace) {
+        const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+        if (node) node.classList.remove('is-modified');
+    }
+    isSaving = false;
+}
+
+window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        saveCurrentFile();
+    }
 });
 
 document.getElementById('open-folder-btn').addEventListener('click', async () => {
@@ -60,6 +96,9 @@ async function renderTree(path, container, indent) {
         
         const item = document.createElement('div');
         item.className = `tree-item ${entry.isDirectory ? 'directory' : 'file'}`;
+        if (!entry.isDirectory && modifiedFiles.has(entry.path)) {
+            item.classList.add('is-modified');
+        }
         item.textContent = entry.name;
         item.style.paddingLeft = `${indent * 15 + 10}px`;
         item.dataset.path = entry.path;
@@ -194,6 +233,8 @@ function getLanguageFromFilename(filename) {
     return map[ext] || 'plaintext';
 }
 
+let isSettingValue = false;
+
 async function openFile(filePath, filename) {
     const content = await window.electronAPI.readFile(filePath);
     if (content !== null) {
@@ -206,7 +247,10 @@ async function openFile(filePath, filename) {
         
         const lang = getLanguageFromFilename(filename);
         monaco.editor.setModelLanguage(editor.getModel(), lang);
+        
+        isSettingValue = true;
         editor.setValue(content);
+        isSettingValue = false;
         
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         const activeTab = document.querySelector(`.tab[data-path="${filePath.replace(/\\/g, '\\\\')}"]`);
@@ -222,6 +266,7 @@ function renderTabs() {
         const el = document.createElement('div');
         el.className = 'tab';
         if (tab.path === currentFilePath) el.classList.add('active');
+        if (modifiedFiles.has(tab.path)) el.classList.add('is-modified');
         el.dataset.path = tab.path;
         
         el.innerHTML = `
@@ -233,18 +278,78 @@ function renderTabs() {
         
         el.querySelector('.tab-close').addEventListener('click', (e) => {
             e.stopPropagation();
-            openTabs = openTabs.filter(t => t.path !== tab.path);
-            renderTabs();
-            if (openTabs.length > 0) {
-                openFile(openTabs[openTabs.length - 1].path, openTabs[openTabs.length - 1].name);
-            } else {
-                editor.setValue('');
-                currentFilePath = null;
+            
+            const warnOnClose = localStorage.getItem('atomic_warn_close') !== 'false';
+            if (modifiedFiles.has(tab.path) && warnOnClose) {
+                // Show Unsaved Modal
+                const unsavedModal = document.getElementById('unsaved-modal');
+                const cancelBtn = document.getElementById('unsaved-cancel');
+                const discardBtn = document.getElementById('unsaved-discard');
+                const saveBtn = document.getElementById('unsaved-save');
+                const dontRemindCheckbox = document.getElementById('unsaved-dont-remind');
+                
+                unsavedModal.classList.remove('hidden');
+                
+                const closeModal = () => unsavedModal.classList.add('hidden');
+                
+                // Remove old listeners by cloning
+                const newCancelBtn = cancelBtn.cloneNode(true);
+                const newDiscardBtn = discardBtn.cloneNode(true);
+                const newSaveBtn = saveBtn.cloneNode(true);
+                cancelBtn.replaceWith(newCancelBtn);
+                discardBtn.replaceWith(newDiscardBtn);
+                saveBtn.replaceWith(newSaveBtn);
+                
+                newCancelBtn.addEventListener('click', closeModal);
+                
+                newDiscardBtn.addEventListener('click', () => {
+                    if (dontRemindCheckbox.checked) {
+                        localStorage.setItem('atomic_warn_close', 'false');
+                        document.getElementById('toggle-warn-close').checked = false;
+                    }
+                    modifiedFiles.delete(tab.path);
+                    closeTab(tab.path);
+                    closeModal();
+                });
+                
+                newSaveBtn.addEventListener('click', async () => {
+                    if (dontRemindCheckbox.checked) {
+                        localStorage.setItem('atomic_warn_close', 'false');
+                        document.getElementById('toggle-warn-close').checked = false;
+                    }
+                    // Temporarily set active to save it
+                    const prevCurrent = currentFilePath;
+                    currentFilePath = tab.path;
+                    await saveCurrentFile();
+                    currentFilePath = prevCurrent;
+                    closeTab(tab.path);
+                    closeModal();
+                });
+                
+                return;
             }
+            
+            closeTab(tab.path);
         });
         
         container.appendChild(el);
     });
+}
+
+function closeTab(path) {
+    modifiedFiles.delete(path);
+    if (currentWorkspace) {
+        const node = document.querySelector(`.tree-item[data-path="${path.replace(/\\/g, '\\\\')}"]`);
+        if (node) node.classList.remove('is-modified');
+    }
+    openTabs = openTabs.filter(t => t.path !== path);
+    renderTabs();
+    if (openTabs.length > 0) {
+        openFile(openTabs[openTabs.length - 1].path, openTabs[openTabs.length - 1].name);
+    } else {
+        editor.setValue('');
+        currentFilePath = null;
+    }
 }
 
 // Initialize App Version and Stats
@@ -339,3 +444,13 @@ systemStats.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   updateInsightsVisibility(false);
 });
+
+// Warn on close setting
+const toggleWarnClose = document.getElementById('toggle-warn-close');
+const warnOnClosePref = localStorage.getItem('atomic_warn_close') !== 'false';
+if (toggleWarnClose) {
+  toggleWarnClose.checked = warnOnClosePref;
+  toggleWarnClose.addEventListener('change', (e) => {
+    localStorage.setItem('atomic_warn_close', e.target.checked);
+  });
+}
