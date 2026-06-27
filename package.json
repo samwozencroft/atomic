@@ -13,14 +13,12 @@
   "build": {
     "appId": "com.atom.reborn",
     "productName": "Atomic",
-    "publish": {
-      "provider": "github"
-    },
+    "publish": [
+      "github"
+    ],
     "mac": {
-      "target": [
-        "dmg",
-        "zip"
-      ],
+      "icon": "build/icon.png",
+      "target": ["dmg", "zip"],
       "identity": null
     },
     "win": {
