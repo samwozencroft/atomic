@@ -88,6 +88,7 @@
                 <span id="reset-custom-theme">Reset</span>
               </div>
             </div>
+            <button id="browse-themes-btn" class="btn" style="margin-top: 15px; width: 100%;">Browse Community Themes</button>
           </div>
           <div class="setting-item" style="margin-top: 15px;">
             <label for="toggle-warn-close">Warn on closing unsaved files</label>
@@ -137,6 +138,35 @@
     </div>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <div id="theme-marketplace-modal" class="modal hidden">
+      <div class="settings-content" style="width: 500px;">
+        <div class="settings-nav">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <button id="back-to-settings" class="btn-icon">←</button>
+            <h3>Community Themes</h3>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <button id="refresh-themes" class="btn-icon" title="Refresh Themes">↻</button>
+            <button id="close-marketplace" class="btn-icon" title="Close">×</button>
+          </div>
+        </div>
+        <div class="settings-body" style="padding: 15px;">
+          <input type="text" id="theme-search" placeholder="Search themes..." style="width: 100%; padding: 8px; margin-bottom: 15px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+          <div id="theme-list" style="max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
+            <!-- Themes will be injected here -->
+          </div>
+          <hr style="border: none; border-top: 1px solid var(--border-color); margin: 15px 0;">
+          
+          <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+            <input type="text" id="upload-theme-name" placeholder="Theme Name" style="flex: 1; padding: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+            <input type="text" id="upload-theme-author" placeholder="Author" style="flex: 1; padding: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+          </div>
+          
+          <button id="upload-theme-btn" class="btn" style="width: 100%;">Upload Your Theme</button>
+        </div>
+      </div>
+    </div>
+
     <script src="renderer.js"></script>
 </body>
 </html>

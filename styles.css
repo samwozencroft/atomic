@@ -337,7 +337,8 @@ body {
 
 /* Settings & Unsaved Modals */
 #settings-modal,
-#unsaved-modal {
+#unsaved-modal,
+#theme-marketplace-modal {
   position: fixed;
   top: 0;
   left: 0;
@@ -351,7 +352,8 @@ body {
 }
 
 #settings-modal.hidden,
-#unsaved-modal.hidden {
+#unsaved-modal.hidden,
+#theme-marketplace-modal.hidden {
   display: none;
 }
 
@@ -483,6 +485,40 @@ body {
 #reset-custom-theme.visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Marketplace Styles */
+.theme-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background: var(--bg-darker);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+.theme-list-item-info {
+  display: flex;
+  flex-direction: column;
+}
+.theme-list-item-title {
+  font-weight: 600;
+  color: var(--text-normal);
+  font-size: 13px;
+}
+.theme-list-item-author {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+.btn-icon:hover {
+  color: var(--text-normal);
 }
 
 /* Update Popup */

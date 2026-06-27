@@ -649,3 +649,177 @@ window.electronAPI.onMenuAction(async (action) => {
       break;
   }
 });
+
+
+// --- Theme Marketplace Logic ---
+const browseThemesBtn = document.getElementById('browse-themes-btn');
+const marketplaceModal = document.getElementById('theme-marketplace-modal');
+const closeMarketplaceBtn = document.getElementById('close-marketplace');
+const backToSettingsBtn = document.getElementById('back-to-settings');
+const themeList = document.getElementById('theme-list');
+const uploadThemeBtn = document.getElementById('upload-theme-btn');
+const themeSearch = document.getElementById('theme-search');
+
+const BUCKET_URL = 'https://storage.googleapis.com/atomic-themes/index.json';
+const WEBHOOK_URL = 'https://us-central1-atomic-500709.cloudfunctions.net/themeMarketplaceHandler';
+let cachedThemes = [];
+
+if (browseThemesBtn) {
+  browseThemesBtn.addEventListener('click', () => {
+    document.getElementById('settings-modal').classList.add('hidden');
+    marketplaceModal.classList.remove('hidden');
+    fetchMarketplaceThemes();
+  });
+}
+
+if (backToSettingsBtn) {
+  backToSettingsBtn.addEventListener('click', () => {
+    marketplaceModal.classList.add('hidden');
+    document.getElementById('settings-modal').classList.remove('hidden');
+  });
+}
+
+const refreshThemesBtn = document.getElementById('refresh-themes');
+
+if (refreshThemesBtn) {
+  refreshThemesBtn.addEventListener('click', () => {
+    fetchMarketplaceThemes();
+  });
+}
+
+if (closeMarketplaceBtn) {
+  closeMarketplaceBtn.addEventListener('click', () => {
+    marketplaceModal.classList.add('hidden');
+  });
+}
+
+async function fetchMarketplaceThemes() {
+  themeList.innerHTML = '<span style="color: var(--text-muted);">Loading themes...</span>';
+  try {
+    const response = await fetch(`${BUCKET_URL}?t=${Date.now()}`);
+    if (!response.ok) throw new Error('Failed to fetch themes');
+    const data = await response.json();
+    cachedThemes = data.themes || [];
+    renderMarketplaceThemes(cachedThemes);
+  } catch (error) {
+    themeList.innerHTML = '<span style="color: #e06c75;">Failed to load themes. Ensure bucket is public.</span>';
+    console.error(error);
+  }
+}
+
+function renderMarketplaceThemes(themes) {
+  themeList.innerHTML = '';
+  if (themes.length === 0) {
+    themeList.innerHTML = '<span style="color: var(--text-muted);">No themes found.</span>';
+    return;
+  }
+  
+  themes.forEach(theme => {
+    const item = document.createElement('div');
+    item.className = 'theme-list-item';
+    
+    const info = document.createElement('div');
+    info.className = 'theme-list-item-info';
+    info.innerHTML = `
+      <span class="theme-list-item-title">${theme.name}</span>
+      <span class="theme-list-item-author">by ${theme.author}</span>
+    `;
+    
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'btn';
+    applyBtn.textContent = 'Apply';
+    applyBtn.onclick = () => downloadAndApplyTheme(theme);
+    
+    item.appendChild(info);
+    item.appendChild(applyBtn);
+    themeList.appendChild(item);
+  });
+}
+
+if (themeSearch) {
+  themeSearch.addEventListener('input', (e) => {
+    const query = e.target.value.toLowerCase();
+    const filtered = cachedThemes.filter(t => t.name.toLowerCase().includes(query) || t.author.toLowerCase().includes(query));
+    renderMarketplaceThemes(filtered);
+  });
+}
+
+async function downloadAndApplyTheme(theme) {
+  try {
+    const response = await fetch(theme.url);
+    if (!response.ok) throw new Error('Failed to download theme');
+    const cssContent = await response.text();
+    
+    // Ensure custom theme file exists, then write to it
+    await window.electronAPI.initCustomTheme();
+    const customPath = await window.electronAPI.getCustomThemePath();
+    await window.electronAPI.writeFile(customPath, cssContent);
+    
+    // Apply custom theme
+    localStorage.setItem('atomic_theme', 'custom');
+    updateActiveThemeCard('custom');
+    await applyTheme('custom');
+    
+    marketplaceModal.classList.add('hidden');
+  } catch (error) {
+    console.error('Download failed:', error);
+    alert('Failed to download and apply theme.');
+  }
+}
+
+if (uploadThemeBtn) {
+  uploadThemeBtn.addEventListener('click', async () => {
+    const customPath = await window.electronAPI.getCustomThemePath();
+    const cssContent = await window.electronAPI.readFile(customPath);
+    if (!cssContent) {
+      alert('You have not created a custom theme yet!');
+      return;
+    }
+    
+    const nameInput = document.getElementById('upload-theme-name');
+    const authorInput = document.getElementById('upload-theme-author');
+    
+    const name = nameInput ? nameInput.value.trim() : '';
+    const author = authorInput ? authorInput.value.trim() : '';
+    
+    if (!name || !author) {
+      alert('Please provide both a Theme Name and an Author Name.');
+      return;
+    }
+    
+    if (WEBHOOK_URL === 'YOUR_WEBHOOK_URL_HERE') {
+      alert('Upload failed: Webhook URL is not configured in renderer.js!');
+      return;
+    }
+    
+    try {
+      uploadThemeBtn.textContent = 'Submitting...';
+      uploadThemeBtn.disabled = true;
+      const payload = {
+        name: name,
+        author: author,
+        css: cssContent
+      };
+      
+      const response = await fetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (response.ok) {
+        alert('Theme submitted for review successfully!');
+        if (nameInput) nameInput.value = '';
+        if (authorInput) authorInput.value = '';
+      } else {
+        throw new Error('Webhook failed');
+      }
+    } catch (error) {
+      console.error(error);
+      alert('Failed to submit theme. Check webhook configuration.');
+    } finally {
+      uploadThemeBtn.textContent = 'Upload Your Theme';
+      uploadThemeBtn.disabled = false;
+    }
+  });
+}
