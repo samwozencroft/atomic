@@ -263,7 +263,13 @@ window.electronAPI.onUpdateAvailable(() => {
 });
 
 window.electronAPI.onUpdateDownloaded(() => {
-  updateMessage.textContent = "Update Downloaded. It will be installed on restart.";
+  if (window.electronAPI.platform === 'darwin') {
+    updateMessage.textContent = "Update Downloaded. Manual installation required on macOS.";
+    updateRestartBtn.textContent = "Download Update";
+  } else {
+    updateMessage.textContent = "Update Downloaded. It will be installed on restart.";
+    updateRestartBtn.textContent = "Restart and Install";
+  }
   updateRestartBtn.classList.remove('hidden');
 });
 

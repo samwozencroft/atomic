@@ -34,7 +34,11 @@ function createWindow() {
 
 // IPC handler for restarting the app after update download
 ipcMain.on('restart_app', () => {
-  autoUpdater.quitAndInstall();
+  if (process.platform === 'darwin') {
+    require('electron').shell.openExternal('https://github.com/samwozencroft/atomic/releases/latest');
+  } else {
+    autoUpdater.quitAndInstall();
+  }
 });
 
 ipcMain.handle('app:getVersion', () => {
