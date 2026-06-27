@@ -247,10 +247,18 @@ function renderTabs() {
     });
 }
 
-// Initialize App Version
+// Initialize App Version and Stats
 window.electronAPI.getVersion().then(version => {
-  document.getElementById('app-version-display').textContent = `Version ${version}`;
+  document.getElementById('app-version-display-status').textContent = `Version ${version}`;
 });
+
+setInterval(async () => {
+  if (window.electronAPI.getSystemStats) {
+    const stats = await window.electronAPI.getSystemStats();
+    document.getElementById('cpu-stat').textContent = `CPU: ${stats.cpu}%`;
+    document.getElementById('mem-stat').textContent = `Mem: ${stats.memory}%`;
+  }
+}, 1000);
 
 // Auto Updater UI Logic
 const updatePopup = document.getElementById('update-popup');

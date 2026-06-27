@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
+  getSystemStats: () => ipcRenderer.invoke('app:getSystemStats'),
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),

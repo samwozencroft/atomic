@@ -133,3 +133,33 @@ ipcMain.handle('fs:delete', async (event, targetPath) => {
     return false;
   }
 });
+
+const os = require('os');
+let previousCpuInfo = os.cpus();
+
+ipcMain.handle('app:getSystemStats', () => {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const memPercent = Math.round((usedMem / totalMem) * 100);
+
+  const currentCpuInfo = os.cpus();
+  let idleDiff = 0;
+  let totalDiff = 0;
+
+  for (let i = 0; i < currentCpuInfo.length; i++) {
+    const cpu = currentCpuInfo[i];
+    const prevCpu = previousCpuInfo[i];
+    
+    const prevTotal = Object.values(prevCpu.times).reduce((a, b) => a + b, 0);
+    const currTotal = Object.values(cpu.times).reduce((a, b) => a + b, 0);
+
+    idleDiff += cpu.times.idle - prevCpu.times.idle;
+    totalDiff += currTotal - prevTotal;
+  }
+
+  const cpuPercent = totalDiff === 0 ? 0 : Math.round(100 - (100 * idleDiff / totalDiff));
+  previousCpuInfo = currentCpuInfo;
+
+  return { cpu: cpuPercent, memory: memPercent };
+});
