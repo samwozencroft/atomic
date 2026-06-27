@@ -19,7 +19,12 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
-
+  
+  // Route renderer logs to main process stdout
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      console.log(`[Renderer] ${message}`);
+  });
+  
   // Native Menu Template
   const isMac = process.platform === 'darwin';
   const sendMenuAction = (action) => {
@@ -339,6 +344,26 @@ ipcMain.handle('fs:rename', async (event, oldPath, newPath) => {
 ipcMain.handle('fs:delete', async (event, targetPath) => {
   try {
     await fs.rm(targetPath, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    return false;
+  }
+});
+
+ipcMain.handle('fs:copy', async (event, targetPath) => {
+  try {
+    const parsed = require('path').parse(targetPath);
+    const newPath = require('path').join(parsed.dir, `${parsed.name}-copy${parsed.ext}`);
+    await fs.copyFile(targetPath, newPath);
+    return true;
+  } catch (error) {
+    return false;
+  }
+});
+
+ipcMain.handle('fs:openInFinder', async (event, targetPath) => {
+  try {
+    require('electron').shell.showItemInFolder(targetPath);
     return true;
   } catch (error) {
     return false;

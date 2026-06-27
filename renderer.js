@@ -1,6 +1,10 @@
 let editor;
+let editorRight;
+let activeEditorPane = 'left';
 let currentFilePath = null;
-let openTabs = [];
+let currentFilePathRight = null;
+let openTabsLeft = [];
+let openTabsRight = [];
 let currentWorkspace = null;
 
 const modifiedFiles = new Set();
@@ -33,14 +37,71 @@ require(['vs/editor/editor.main'], function() {
         fontFamily: "'SF Mono', Monaco, Menlo, Courier, monospace"
     });
 
+    editorRight = monaco.editor.create(document.getElementById('editor-container-right'), {
+        value: '',
+        language: 'javascript',
+        theme: 'atom-one-dark',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        fontFamily: "'SF Mono', Monaco, Menlo, Courier, monospace"
+    });
+
+    editor.onDidFocusEditorText(() => { activeEditorPane = 'left'; });
+    editorRight.onDidFocusEditorText(() => { activeEditorPane = 'right'; });
+
+    // Add drop zones to editors
+    const edContainer = document.getElementById('editor-container');
+    const edRightContainer = document.getElementById('editor-container-right');
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        e.currentTarget.classList.add('drag-over');
+    };
+    
+    const handleDragLeave = (e) => {
+        e.currentTarget.classList.remove('drag-over');
+    };
+
+    const handleDrop = (e, pane) => {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        const draggedPath = e.dataTransfer.getData('text/plain');
+        if (draggedPath) {
+            activeEditorPane = pane;
+            const name = draggedPath.split('/').pop();
+            openFile(draggedPath, name, pane);
+        }
+    };
+
+    edContainer.addEventListener('dragover', handleDragOver);
+    edContainer.addEventListener('dragleave', handleDragLeave);
+    edContainer.addEventListener('drop', (e) => handleDrop(e, 'left'));
+
+    edRightContainer.addEventListener('dragover', handleDragOver);
+    edRightContainer.addEventListener('dragleave', handleDragLeave);
+    edRightContainer.addEventListener('drop', (e) => handleDrop(e, 'right'));
+
     editor.onDidChangeModelContent(() => {
         if (!currentFilePath || isSaving || isSettingValue) return;
         if (!modifiedFiles.has(currentFilePath)) {
             modifiedFiles.add(currentFilePath);
             renderTabs();
-            // Update tree view as well
             if (currentWorkspace) {
-                const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+                const node = document.querySelector(`.tree-item[data-path="${activePath.replace(/\\/g, '\\\\')}"]`);
+                if (node) node.classList.add('is-modified');
+            }
+        }
+    });
+
+    editorRight.onDidChangeModelContent(() => {
+        if (!currentFilePathRight || isSaving || isSettingValue) return;
+        if (!modifiedFiles.has(currentFilePathRight)) {
+            modifiedFiles.add(currentFilePathRight);
+            renderTabs();
+            if (currentWorkspace) {
+                const node = document.querySelector(`.tree-item[data-path="${currentFilePathRight.replace(/\\/g, '\\\\')}"]`);
                 if (node) node.classList.add('is-modified');
             }
         }
@@ -48,23 +109,26 @@ require(['vs/editor/editor.main'], function() {
 });
 
 async function saveCurrentFile() {
-    if (!currentFilePath || isSaving) return;
+    const activePath = activeEditorPane === 'left' ? currentFilePath : currentFilePathRight;
+    const activeEd = activeEditorPane === 'left' ? editor : editorRight;
+
+    if (!activePath || isSaving) return;
     
     isSaving = true;
-    const content = editor.getValue();
-    const success = await window.electronAPI.writeFile(currentFilePath, content);
+    const content = activeEd.getValue();
+    const success = await window.electronAPI.writeFile(activePath, content);
     
     if (success) {
-        modifiedFiles.delete(currentFilePath);
+        modifiedFiles.delete(activePath);
         
         // Remove .is-modified visual indicator from tree
         if (currentWorkspace) {
-            const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+            const node = document.querySelector(`.tree-item[data-path="${activePath.replace(/\\/g, '\\\\')}"]`);
             if (node) node.classList.remove('is-modified');
         }
         
         // Remove dirty indicator from tab
-        const tab = openTabs.find(t => t.path === currentFilePath);
+        const tab = [...openTabsLeft, ...openTabsRight].find(t => t.path === currentFilePath);
         if (tab) {
             const tabEl = document.querySelector(`.tab[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
             if (tabEl) tabEl.classList.remove('is-modified');
@@ -202,8 +266,10 @@ document.getElementById('ctx-rename').addEventListener('click', async () => {
         await window.electronAPI.rename(contextTarget.path, newPath);
         
         // Update tabs if file was renamed
-        openTabs = openTabs.map(t => t.path === contextTarget.path ? { path: newPath, name: newName } : t);
+        openTabsLeft = openTabsLeft.map(t => t.path === contextTarget.path ? { path: newPath, name: newName } : t);
+        openTabsRight = openTabsRight.map(t => t.path === contextTarget.path ? { path: newPath, name: newName } : t);
         if (currentFilePath === contextTarget.path) currentFilePath = newPath;
+        if (currentFilePathRight === contextTarget.path) currentFilePathRight = newPath;
         renderTabs();
         
         if (currentWorkspace) loadDirectory(currentWorkspace); // Reload tree
@@ -217,10 +283,15 @@ document.getElementById('ctx-delete').addEventListener('click', async () => {
         await window.electronAPI.deletePath(contextTarget.path);
         
         // Remove from tabs if open
-        openTabs = openTabs.filter(t => !t.path.startsWith(contextTarget.path));
+        openTabsLeft = openTabsLeft.filter(t => !t.path.startsWith(contextTarget.path));
+        openTabsRight = openTabsRight.filter(t => !t.path.startsWith(contextTarget.path));
         if (currentFilePath && currentFilePath.startsWith(contextTarget.path)) {
             editor.setValue('');
             currentFilePath = null;
+        }
+        if (currentFilePathRight && currentFilePathRight.startsWith(contextTarget.path)) {
+            editorRight.setValue('');
+            currentFilePathRight = null;
         }
         renderTabs();
         
@@ -228,6 +299,49 @@ document.getElementById('ctx-delete').addEventListener('click', async () => {
     }
 });
 
+document.getElementById('ctx-open-right').addEventListener('click', () => {
+    console.log('ctx-open-right clicked', contextTarget);
+    if (!contextTarget) return;
+    activeEditorPane = 'right';
+    openFile(contextTarget.path, contextTarget.path.split('/').pop(), 'right');
+});
+
+document.getElementById('ctx-open-left').addEventListener('click', () => {
+    console.log('ctx-open-left clicked', contextTarget);
+    if (!contextTarget) return;
+    activeEditorPane = 'left';
+    openFile(contextTarget.path, contextTarget.path.split('/').pop(), 'left');
+});
+
+document.getElementById('ctx-copy').addEventListener('click', async () => {
+    if (!contextTarget) return;
+    const success = await window.electronAPI.copyFile(contextTarget.path);
+    if (success && currentWorkspace) {
+        loadDirectory(currentWorkspace); // Reload tree
+    } else if (!success) {
+        alert('Failed to copy file.');
+    }
+});
+
+document.getElementById('ctx-open-finder').addEventListener('click', async () => {
+    if (!contextTarget) return;
+    await window.electronAPI.openInFinder(contextTarget.path);
+});
+
+
+function getDragAfterElement(container, x) {
+    const draggableElements = [...container.querySelectorAll('.tab:not(.dragging)')];
+    
+    return draggableElements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = x - box.left - box.width / 2;
+        if (offset < 0 && offset > closest.offset) {
+            return { offset: offset, element: child };
+        } else {
+            return closest;
+        }
+    }, { offset: Number.NEGATIVE_INFINITY }).element;
+}
 
 function getLanguageFromFilename(filename) {
     const ext = filename.split('.').pop().toLowerCase();
@@ -281,123 +395,269 @@ function getLanguageFromFilename(filename) {
 
 let isSettingValue = false;
 
-async function openFile(filePath, filename) {
+async function openFile(filePath, filename, pane = null) {
+    if (!pane) {
+        if (currentFilePath === filePath) pane = 'left';
+        else if (currentFilePathRight === filePath) pane = 'right';
+        else pane = activeEditorPane;
+    }
+
     const content = await window.electronAPI.readFile(filePath);
     if (content !== null) {
-        currentFilePath = filePath;
-        
-        if (!openTabs.find(t => t.path === filePath)) {
-            openTabs.push({ path: filePath, name: filename });
-            renderTabs();
+        if (pane === 'left') {
+            currentFilePath = filePath;
+            activeEditorPane = 'left';
+            document.getElementById('editor-wrapper').style.display = 'flex';
+            document.getElementById('editor-column-left').style.display = 'flex';
+            document.getElementById('editor-container').style.display = 'block';
+            
+            if (currentFilePathRight === filePath) {
+                currentFilePathRight = null;
+                editorRight.setValue('');
+                openTabsRight = openTabsRight.filter(t => t.path !== filePath);
+            }
+            
+            if (!openTabsLeft.find(t => t.path === filePath)) {
+                openTabsLeft.push({ path: filePath, name: filename });
+            }
+        } else {
+            currentFilePathRight = filePath;
+            activeEditorPane = 'right';
+            document.getElementById('editor-wrapper').style.display = 'flex';
+            document.getElementById('editor-column-right').style.display = 'flex';
+            document.getElementById('editor-container-right').style.display = 'block';
+            
+            if (currentFilePath === filePath) {
+                currentFilePath = null;
+                editor.setValue('');
+                openTabsLeft = openTabsLeft.filter(t => t.path !== filePath);
+            }
+            
+            if (!openTabsRight.find(t => t.path === filePath)) {
+                openTabsRight.push({ path: filePath, name: filename });
+            }
         }
         
+        renderTabs();
+        
         const lang = getLanguageFromFilename(filename);
-        monaco.editor.setModelLanguage(editor.getModel(), lang);
+        const ed = pane === 'left' ? editor : editorRight;
+        monaco.editor.setModelLanguage(ed.getModel(), lang);
         
         isSettingValue = true;
-        editor.setValue(content);
+        ed.setValue(content);
         isSettingValue = false;
         
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        const activeTab = document.querySelector(`.tab[data-path="${filePath.replace(/\\/g, '\\\\')}"]`);
+        const activeTab = document.querySelector(`#tabs-${pane} .tab[data-path="${filePath.replace(/\\/g, '\\\\')}"]`);
         if (activeTab) activeTab.classList.add('active');
+
+        setTimeout(() => {
+            if (editor) editor.layout();
+            if (editorRight) editorRight.layout();
+        }, 50);
     }
 }
-
+let dragTabPath = null;
 function renderTabs() {
-    const container = document.getElementById('tabs');
-    container.innerHTML = '';
-    
-    openTabs.forEach(tab => {
-        const el = document.createElement('div');
-        el.className = 'tab';
-        if (tab.path === currentFilePath) el.classList.add('active');
-        if (modifiedFiles.has(tab.path)) el.classList.add('is-modified');
-        el.dataset.path = tab.path;
+    ['left', 'right'].forEach(pane => {
+        const container = document.getElementById(`tabs-${pane}`);
+        if (!container) return;
         
-        el.innerHTML = `
-            <span>${tab.name}</span>
-            <span class="tab-close" style="margin-left: 10px;">×</span>
-        `;
+        container.innerHTML = '';
         
-        el.addEventListener('click', () => openFile(tab.path, tab.name));
+        // Add drag over events to container
+        container.ondragover = e => {
+            e.preventDefault();
+            const draggable = document.querySelector('.dragging');
+            if (!draggable) return;
+            const afterElement = getDragAfterElement(container, e.clientX);
+            if (afterElement == null) {
+                container.appendChild(draggable);
+            } else {
+                container.insertBefore(draggable, afterElement);
+            }
+        };
         
-        el.querySelector('.tab-close').addEventListener('click', (e) => {
-            e.stopPropagation();
+        container.ondrop = e => {
+            e.preventDefault();
+            const newOrderPaths = Array.from(container.querySelectorAll('.tab')).map(t => t.dataset.path);
             
-            const warnOnClose = localStorage.getItem('atomic_warn_close') !== 'false';
-            if (modifiedFiles.has(tab.path) && warnOnClose) {
-                // Show Unsaved Modal
-                const unsavedModal = document.getElementById('unsaved-modal');
-                const cancelBtn = document.getElementById('unsaved-cancel');
-                const discardBtn = document.getElementById('unsaved-discard');
-                const saveBtn = document.getElementById('unsaved-save');
-                const dontRemindCheckbox = document.getElementById('unsaved-dont-remind');
+            // Allow dragging between panes
+            const draggable = document.querySelector('.dragging');
+            if (draggable) {
+                const p = draggable.dataset.path;
+                const n = draggable.dataset.name;
+                // remove from both
+                openTabsLeft = openTabsLeft.filter(t => t.path !== p);
+                openTabsRight = openTabsRight.filter(t => t.path !== p);
                 
-                unsavedModal.classList.remove('hidden');
+                // if it's the current file in the OTHER pane, clear it
+                if (pane === 'left' && currentFilePathRight === p) {
+                    currentFilePathRight = null;
+                    editorRight.setValue('');
+                }
+                if (pane === 'right' && currentFilePath === p) {
+                    currentFilePath = null;
+                    editor.setValue('');
+                }
                 
-                const closeModal = () => unsavedModal.classList.add('hidden');
-                
-                // Remove old listeners by cloning
-                const newCancelBtn = cancelBtn.cloneNode(true);
-                const newDiscardBtn = discardBtn.cloneNode(true);
-                const newSaveBtn = saveBtn.cloneNode(true);
-                cancelBtn.replaceWith(newCancelBtn);
-                discardBtn.replaceWith(newDiscardBtn);
-                saveBtn.replaceWith(newSaveBtn);
-                
-                newCancelBtn.addEventListener('click', closeModal);
-                
-                newDiscardBtn.addEventListener('click', () => {
-                    if (dontRemindCheckbox.checked) {
-                        localStorage.setItem('atomic_warn_close', 'false');
-                        document.getElementById('toggle-warn-close').checked = false;
-                    }
-                    modifiedFiles.delete(tab.path);
-                    closeTab(tab.path);
-                    closeModal();
-                });
-                
-                newSaveBtn.addEventListener('click', async () => {
-                    if (dontRemindCheckbox.checked) {
-                        localStorage.setItem('atomic_warn_close', 'false');
-                        document.getElementById('toggle-warn-close').checked = false;
-                    }
-                    // Temporarily set active to save it
-                    const prevCurrent = currentFilePath;
-                    currentFilePath = tab.path;
-                    await saveCurrentFile();
-                    currentFilePath = prevCurrent;
-                    closeTab(tab.path);
-                    closeModal();
-                });
-                
-                return;
+                // Add to current pane openTabs array to avoid reference issues
+                if (pane === 'left') {
+                    openTabsLeft.push({path: p, name: n});
+                } else {
+                    openTabsRight.push({path: p, name: n});
+                }
             }
             
-            closeTab(tab.path);
+            // Re-sync array based on DOM order
+            let allTabs = [...openTabsLeft, ...openTabsRight];
+            if (pane === 'left') {
+                openTabsLeft = newOrderPaths.map(p => allTabs.find(t => t.path === p)).filter(Boolean);
+            } else {
+                openTabsRight = newOrderPaths.map(p => allTabs.find(t => t.path === p)).filter(Boolean);
+            }
+            
+            // We just changed state, render again to be safe and set active correctly
+            renderTabs();
+        };
+        
+        const tabsArr = pane === 'left' ? openTabsLeft : openTabsRight;
+        const currentActivePath = pane === 'left' ? currentFilePath : currentFilePathRight;
+        
+        tabsArr.forEach(tab => {
+            const el = document.createElement('div');
+            el.className = 'tab';
+            if (tab.path === currentActivePath) el.classList.add('active');
+            if (modifiedFiles.has(tab.path)) el.classList.add('is-modified');
+            el.dataset.path = tab.path;
+            el.dataset.name = tab.name;
+            el.draggable = true;
+            
+            el.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                showContextMenu(e.pageX, e.pageY, tab.path, false);
+            });
+
+            el.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', tab.path);
+                e.dataTransfer.effectAllowed = 'move';
+                el.classList.add('dragging');
+            });
+
+            el.addEventListener('dragend', () => {
+                el.classList.remove('dragging');
+            });
+
+            el.innerHTML = `
+                <span>${tab.name}</span>
+                <span class="tab-close" style="margin-left: 10px;">×</span>
+            `;
+            
+            el.addEventListener('click', () => openFile(tab.path, tab.name, pane));
+            
+            
+            el.querySelector('.tab-close').addEventListener('click', (e) => {
+                e.stopPropagation();
+                
+                const warnOnClose = localStorage.getItem('atomic_warn_close') !== 'false';
+                if (modifiedFiles.has(tab.path) && warnOnClose) {
+                    const unsavedModal = document.getElementById('unsaved-modal');
+                    const cancelBtn = document.getElementById('unsaved-cancel');
+                    const discardBtn = document.getElementById('unsaved-discard');
+                    const saveBtn = document.getElementById('unsaved-save');
+                    const dontRemindCheckbox = document.getElementById('unsaved-dont-remind');
+                    
+                    unsavedModal.classList.remove('hidden');
+                    
+                    const closeModal = () => unsavedModal.classList.add('hidden');
+                    
+                    // Clone to remove old listeners
+                    const newCancelBtn = cancelBtn.cloneNode(true);
+                    const newDiscardBtn = discardBtn.cloneNode(true);
+                    const newSaveBtn = saveBtn.cloneNode(true);
+                    cancelBtn.replaceWith(newCancelBtn);
+                    discardBtn.replaceWith(newDiscardBtn);
+                    saveBtn.replaceWith(newSaveBtn);
+                    
+                    newCancelBtn.addEventListener('click', closeModal);
+                    
+                    newDiscardBtn.addEventListener('click', () => {
+                        if (dontRemindCheckbox.checked) {
+                            localStorage.setItem('atomic_warn_close', 'false');
+                            document.getElementById('toggle-warn-close').checked = false;
+                        }
+                        modifiedFiles.delete(tab.path);
+                        closeTab(tab.path, pane);
+                        closeModal();
+                    });
+                    
+                    newSaveBtn.addEventListener('click', async () => {
+                        if (dontRemindCheckbox.checked) {
+                            localStorage.setItem('atomic_warn_close', 'false');
+                            document.getElementById('toggle-warn-close').checked = false;
+                        }
+                        const prevCurrent = pane === 'left' ? currentFilePath : currentFilePathRight;
+                        if (pane === 'left') currentFilePath = tab.path;
+                        else currentFilePathRight = tab.path;
+                        
+                        // We must set the activeEd correctly for saveCurrentFile
+                        activeEditorPane = pane;
+                        await saveCurrentFile();
+                        
+                        if (pane === 'left') currentFilePath = prevCurrent;
+                        else currentFilePathRight = prevCurrent;
+                        
+                        closeTab(tab.path, pane);
+                        closeModal();
+                    });
+                    
+                    return;
+                }
+                
+                closeTab(tab.path, pane);
+            });
+
+            
+            container.appendChild(el);
         });
         
-        container.appendChild(el);
+        // Hide right column if no tabs and nothing active
+        if (pane === 'right' && openTabsRight.length === 0 && !currentFilePathRight) {
+             document.getElementById('editor-column-right').style.display = 'none';
+        }
     });
 }
 
-function closeTab(path) {
+function closeTab(path, pane) {
     modifiedFiles.delete(path);
     if (currentWorkspace) {
         const node = document.querySelector(`.tree-item[data-path="${path.replace(/\\/g, '\\\\')}"]`);
         if (node) node.classList.remove('is-modified');
     }
-    openTabs = openTabs.filter(t => t.path !== path);
-    renderTabs();
-    if (openTabs.length > 0) {
-        openFile(openTabs[openTabs.length - 1].path, openTabs[openTabs.length - 1].name);
+    
+    if (pane === 'left') {
+        openTabsLeft = openTabsLeft.filter(t => t.path !== path);
+        if (currentFilePath === path) {
+            currentFilePath = null;
+            editor.setValue('');
+        }
     } else {
-        editor.setValue('');
-        currentFilePath = null;
+        openTabsRight = openTabsRight.filter(t => t.path !== path);
+        if (currentFilePathRight === path) {
+            currentFilePathRight = null;
+            editorRight.setValue('');
+        }
+    }
+    
+    renderTabs();
+    
+    const tabsArr = pane === 'left' ? openTabsLeft : openTabsRight;
+    if (tabsArr.length > 0 && ((pane === 'left' && !currentFilePath) || (pane === 'right' && !currentFilePathRight))) {
+        openFile(tabsArr[tabsArr.length - 1].path, tabsArr[tabsArr.length - 1].name, pane);
     }
 }
-
 // Initialize App Version and Stats
 window.electronAPI.getVersion().then(version => {
   document.getElementById('app-version-display-status').textContent = `Version ${version}`;
@@ -561,10 +821,10 @@ if (resetCustomBtn) {
         editor.setValue(customCss || '');
         isSettingValue = false;
         
-        modifiedFiles.delete(currentFilePath);
+        modifiedFiles.delete(activePath);
         const tabEl = document.querySelector(`.tab[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
         if (tabEl) tabEl.classList.remove('is-modified');
-        const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
+        const node = document.querySelector(`.tree-item[data-path="${activePath.replace(/\\/g, '\\\\')}"]`);
         if (node) node.classList.remove('is-modified');
       }
     }

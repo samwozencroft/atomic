@@ -21,5 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onThemeUpdated: (callback) => ipcRenderer.on('theme_updated', () => callback()),
   getCustomThemePath: () => ipcRenderer.invoke('app:getCustomThemePath'),
   initCustomTheme: () => ipcRenderer.invoke('app:initCustomTheme'),
-  resetCustomTheme: () => ipcRenderer.invoke('app:resetCustomTheme')
+  resetCustomTheme: () => ipcRenderer.invoke('app:resetCustomTheme'),
+  openInFinder: (filePath) => ipcRenderer.invoke('fs:openInFinder', filePath),
+  copyFile: (filePath) => ipcRenderer.invoke('fs:copy', filePath)
 });

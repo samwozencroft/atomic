@@ -15,18 +15,24 @@
             <div id="file-tree" class="file-tree"></div>
         </div>
         <div class="main-content">
-            <div class="topbar">
-                <div class="tabs-container" id="tabs"></div>
-                <div class="topbar-actions">
-                    <button id="toggle-sidebar-btn" class="icon-btn" title="Toggle Sidebar">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                            <line x1="9" y1="3" x2="9" y2="21"></line>
-                        </svg>
-                    </button>
+            <div class="topbar-actions">
+                <button id="toggle-sidebar-btn" class="icon-btn" title="Toggle Sidebar">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                    </svg>
+                </button>
+            </div>
+            <div id="editor-wrapper">
+                <div id="editor-column-left" class="editor-column">
+                    <div id="tabs-left" class="tabs-container"></div>
+                    <div id="editor-container"></div>
+                </div>
+                <div id="editor-column-right" class="editor-column" style="display: none;">
+                    <div id="tabs-right" class="tabs-container"></div>
+                    <div id="editor-container-right"></div>
                 </div>
             </div>
-            <div id="editor-container"></div>
             <div id="welcome-screen" class="welcome-screen active">
                 <img src="assets/icon.png" alt="Atomic Logo" class="welcome-logo">
                 <h1>Atomic</h1>
@@ -133,6 +139,10 @@
     <div id="context-menu">
         <div class="context-menu-item" id="ctx-new-file">New File</div>
         <div class="context-menu-item" id="ctx-new-folder">New Folder</div>
+        <div class="context-menu-item" id="ctx-open-right">Open to Side (Right)</div>
+        <div class="context-menu-item" id="ctx-open-left">Open to Side (Left)</div>
+        <div class="context-menu-item" id="ctx-open-finder">Reveal in Finder</div>
+        <div class="context-menu-item" id="ctx-copy">Duplicate File</div>
         <div class="context-menu-item" id="ctx-rename">Rename</div>
         <div class="context-menu-item" id="ctx-delete" style="color: #e06c75;">Delete</div>
     </div>

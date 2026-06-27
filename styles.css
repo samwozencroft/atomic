@@ -147,23 +147,24 @@ body {
   position: relative;
 }
 
-.topbar {
-  display: flex;
-  background-color: var(--bg-darker);
-  height: 35px;
-  border-bottom: 1px solid var(--bg-darkest);
-}
-
 .tabs-container {
   display: flex;
   overflow-x: auto;
-  flex-grow: 1;
+  flex: 0 0 35px;
+  background-color: var(--bg-darker);
+  border-bottom: 1px solid var(--bg-darkest);
+  padding-right: 40px; /* Space for the floating toggle button */
 }
 
 .topbar-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 35px;
   display: flex;
   align-items: center;
   padding: 0 10px;
+  z-index: 100;
 }
 
 .icon-btn {
@@ -208,9 +209,47 @@ body {
   opacity: 1;
 }
 
-#editor-container {
+.tab.dragging {
+  opacity: 0.5;
+  background: var(--bg-hover);
+}
+
+.drag-over {
+  border: 2px dashed var(--accent);
+  opacity: 0.8;
+}
+
+#editor-wrapper {
   flex-grow: 1;
   display: none;
+  flex-direction: row;
+  width: 100%;
+}
+
+.editor-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+#editor-column-right {
+  border-left: 1px solid var(--border-color);
+}
+
+#editor-container {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+#editor-container-right {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .welcome-screen {
