@@ -39,3 +39,11 @@ To run the application locally from source:
    ```bash
    npm start
    ```
+
+---
+
+## Support the Developer
+
+If you find Atomic useful and want to support its ongoing development, consider buying me a coffee! It helps keep the lights on and the updates flowing.
+
+<a href="https://www.buymeacoffee.com/samwozencroft" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
