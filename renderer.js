@@ -515,7 +515,7 @@ function renderTabs() {
             e.preventDefault();
             const newOrderPaths = Array.from(container.querySelectorAll('.tab')).map(t => t.dataset.path);
             
-            // Allow dragging between panes
+                        // Allow dragging between panes
             const draggable = document.querySelector('.dragging');
             if (draggable) {
                 const p = draggable.dataset.path;
@@ -524,24 +524,50 @@ function renderTabs() {
                 openTabsLeft = openTabsLeft.filter(t => t.path !== p);
                 openTabsRight = openTabsRight.filter(t => t.path !== p);
                 
-                // if it's the current file in the OTHER pane, clear it
+                let transferContent = null;
+                let wasActive = false;
+                
+                // if it's the current file in the OTHER pane, grab its content and clear it
                 if (pane === 'left' && currentFilePathRight === p) {
+                    wasActive = true;
+                    transferContent = editorRight.getValue();
                     currentFilePathRight = null;
                     editorRight.setValue('');
-                }
-                if (pane === 'right' && currentFilePath === p) {
+                } else if (pane === 'right' && currentFilePath === p) {
+                    wasActive = true;
+                    transferContent = editor.getValue();
                     currentFilePath = null;
                     editor.setValue('');
                 }
                 
-                // Add to current pane openTabs array to avoid reference issues
+                // Add to current pane openTabs array
                 if (pane === 'left') {
                     openTabsLeft.push({path: p, name: n});
                 } else {
                     openTabsRight.push({path: p, name: n});
                 }
+                
+                // If it was active in the source, or if destination is empty, make it active here
+                const destCurrentPath = pane === 'left' ? currentFilePath : currentFilePathRight;
+                if (wasActive || !destCurrentPath) {
+                    if (transferContent !== null) {
+                        isSettingValue = true;
+                        if (pane === 'left') {
+                            currentFilePath = p;
+                            editor.setValue(transferContent);
+                            monaco.editor.setModelLanguage(editor.getModel(), getLanguageFromFilename(n));
+                        } else {
+                            currentFilePathRight = p;
+                            editorRight.setValue(transferContent);
+                            monaco.editor.setModelLanguage(editorRight.getModel(), getLanguageFromFilename(n));
+                        }
+                        isSettingValue = false;
+                    } else {
+                        // Open from disk since it wasn't loaded in the other pane's buffer
+                        openFile(p, n, pane);
+                    }
+                }
             }
-            
             // Re-sync array based on DOM order
             let allTabs = [...openTabsLeft, ...openTabsRight];
             if (pane === 'left') {
