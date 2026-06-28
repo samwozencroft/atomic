@@ -287,7 +287,7 @@ ipcMain.handle('window:getInitialState', (event) => {
 
 // Existing IPC Handlers
 ipcMain.handle('dialog:openDirectory', async (event) => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openDirectory']
   });
   if (canceled) {
@@ -298,7 +298,7 @@ ipcMain.handle('dialog:openDirectory', async (event) => {
 });
 
 ipcMain.handle('dialog:openFile', async (event) => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openFile']
   });
   if (canceled) {
