@@ -6,6 +6,7 @@ let currentFilePathRight = null;
 let openTabsLeft = [];
 let openTabsRight = [];
 let currentWorkspace = null;
+let expandedDirectories = new Set();
 
 // Initialize window state if opened via tear-off
 async function initializeWindow() {
@@ -124,7 +125,7 @@ require(['vs/editor/editor.main'], function() {
             modifiedFiles.add(currentFilePath);
             renderTabs();
             if (currentWorkspace) {
-                const node = document.querySelector(`.tree-item[data-path="${activePath.replace(/\\/g, '\\\\')}"]`);
+                const node = document.querySelector(`.tree-item[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"]`);
                 if (node) node.classList.add('is-modified');
             }
         }
@@ -252,6 +253,12 @@ async function renderTree(path, container, indent) {
             childrenContainer = document.createElement('div');
             childrenContainer.className = 'tree-children';
             node.appendChild(childrenContainer);
+            
+            if (expandedDirectories.has(entry.path)) {
+                item.classList.add('open');
+                childrenContainer.classList.add('open');
+                await renderTree(entry.path, childrenContainer, indent + 1);
+            }
         }
         
         item.addEventListener('click', async (e) => {
@@ -261,12 +268,14 @@ async function renderTree(path, container, indent) {
                 if (isOpen) {
                     item.classList.remove('open');
                     childrenContainer.classList.remove('open');
+                    expandedDirectories.delete(entry.path);
                 } else {
                     item.classList.add('open');
                     if (childrenContainer.innerHTML === '') {
                         await renderTree(entry.path, childrenContainer, indent + 1);
                     }
                     childrenContainer.classList.add('open');
+                    expandedDirectories.add(entry.path);
                 }
             } else {
                 openFile(entry.path, entry.name);
@@ -282,6 +291,66 @@ async function renderTree(path, container, indent) {
         
         container.appendChild(node);
     }
+}
+
+
+// Custom Dialogs
+function customPrompt(message, defaultValue = '') {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('prompt-modal');
+        const msgEl = document.getElementById('prompt-message');
+        const inputEl = document.getElementById('prompt-input');
+        const cancelBtn = document.getElementById('prompt-cancel');
+        const okBtn = document.getElementById('prompt-ok');
+        
+        msgEl.textContent = message;
+        inputEl.value = defaultValue;
+        modal.classList.remove('hidden');
+        inputEl.focus();
+        if (defaultValue) inputEl.select();
+        
+        const cleanup = () => {
+            modal.classList.add('hidden');
+            cancelBtn.removeEventListener('click', onCancel);
+            okBtn.removeEventListener('click', onOk);
+            inputEl.removeEventListener('keydown', onKey);
+        };
+        
+        const onCancel = () => { cleanup(); resolve(null); };
+        const onOk = () => { cleanup(); resolve(inputEl.value); };
+        const onKey = (e) => {
+            if (e.key === 'Enter') onOk();
+            if (e.key === 'Escape') onCancel();
+        };
+        
+        cancelBtn.addEventListener('click', onCancel);
+        okBtn.addEventListener('click', onOk);
+        inputEl.addEventListener('keydown', onKey);
+    });
+}
+
+function customConfirm(message) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('confirm-modal');
+        const msgEl = document.getElementById('confirm-message');
+        const cancelBtn = document.getElementById('confirm-cancel');
+        const okBtn = document.getElementById('confirm-ok');
+        
+        msgEl.textContent = message;
+        modal.classList.remove('hidden');
+        
+        const cleanup = () => {
+            modal.classList.add('hidden');
+            cancelBtn.removeEventListener('click', onCancel);
+            okBtn.removeEventListener('click', onOk);
+        };
+        
+        const onCancel = () => { cleanup(); resolve(false); };
+        const onOk = () => { cleanup(); resolve(true); };
+        
+        cancelBtn.addEventListener('click', onCancel);
+        okBtn.addEventListener('click', onOk);
+    });
 }
 
 // Context Menu Logic
@@ -302,7 +371,7 @@ document.addEventListener('click', () => {
 document.getElementById('ctx-new-file').addEventListener('click', async () => {
     if (!contextTarget) return;
     const parentDir = contextTarget.isDirectory ? contextTarget.path : contextTarget.path.split('/').slice(0, -1).join('/');
-    const name = prompt("Enter file name:");
+    const name = await customPrompt("Enter file name:");
     if (name) {
         const newPath = `${parentDir}/${name}`;
         await window.electronAPI.writeFile(newPath, "");
@@ -313,7 +382,7 @@ document.getElementById('ctx-new-file').addEventListener('click', async () => {
 document.getElementById('ctx-new-folder').addEventListener('click', async () => {
     if (!contextTarget) return;
     const parentDir = contextTarget.isDirectory ? contextTarget.path : contextTarget.path.split('/').slice(0, -1).join('/');
-    const name = prompt("Enter folder name:");
+    const name = await customPrompt("Enter folder name:");
     if (name) {
         const newPath = `${parentDir}/${name}`;
         await window.electronAPI.mkdir(newPath);
@@ -327,7 +396,7 @@ document.getElementById('ctx-rename').addEventListener('click', async () => {
     const oldName = parts.pop();
     const parentDir = parts.join('/');
     
-    const newName = prompt("Rename to:", oldName);
+    const newName = await customPrompt("Rename to:", oldName);
     if (newName && newName !== oldName) {
         const newPath = `${parentDir}/${newName}`;
         await window.electronAPI.rename(contextTarget.path, newPath);
@@ -345,7 +414,7 @@ document.getElementById('ctx-rename').addEventListener('click', async () => {
 
 document.getElementById('ctx-delete').addEventListener('click', async () => {
     if (!contextTarget) return;
-    const confirmDelete = confirm(`Are you sure you want to delete ${contextTarget.path}?`);
+    const confirmDelete = await customConfirm(`Are you sure you want to delete ${contextTarget.path}?`);
     if (confirmDelete) {
         await window.electronAPI.deletePath(contextTarget.path);
         
@@ -1308,3 +1377,40 @@ editorWrapper.addEventListener('drop', (e) => {
         }
     }
 }, true);
+
+
+// Sidebar resizing logic
+const resizerX = document.getElementById('sidebar-resizer');
+const sidebar = document.querySelector('.sidebar');
+let isResizingX = false;
+
+resizerX.addEventListener('mousedown', (e) => {
+    isResizingX = true;
+    resizerX.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isResizingX) return;
+    
+    // Calculate new width
+    let newWidth = e.clientX;
+    if (newWidth < 150) newWidth = 150;
+    if (newWidth > 800) newWidth = 800;
+    
+    sidebar.style.width = `${newWidth}px`;
+    
+    // Inform Monaco to resize
+    if (editor) editor.layout();
+    if (editorRight) editorRight.layout();
+});
+
+document.addEventListener('mouseup', () => {
+    if (isResizingX) {
+        isResizingX = false;
+        resizerX.classList.remove('resizing');
+        document.body.style.cursor = 'default';
+        if (editor) editor.layout();
+        if (editorRight) editorRight.layout();
+    }
+});

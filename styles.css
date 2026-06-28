@@ -55,10 +55,26 @@ body {
 
 .sidebar {
   width: 250px;
+  min-width: 150px;
+  max-width: 800px;
   background-color: var(--bg-darker);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+}
+
+.resizer-x {
+  width: 5px;
+  cursor: col-resize;
+  background-color: transparent;
+  transition: background-color 0.2s;
+  z-index: 10;
+  margin-left: -3px;
+  margin-right: -2px;
+}
+
+.resizer-x:hover, .resizer-x.resizing {
+  background-color: var(--accent-blue);
 }
 
 .sidebar-header {
@@ -84,7 +100,7 @@ body {
 
 .file-tree {
   flex-grow: 1;
-  overflow-y: auto;
+  overflow: auto;
   padding: 10px 0;
 }
 
@@ -97,8 +113,7 @@ body {
   padding: 4px 10px;
   cursor: pointer;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: max-content;
   color: var(--text-normal);
   display: flex;
   align-items: center;
@@ -392,8 +407,10 @@ body {
 
 #settings-modal.hidden,
 #unsaved-modal.hidden,
-#theme-marketplace-modal.hidden {
-  display: none;
+#theme-marketplace-modal.hidden,
+#prompt-modal.hidden,
+#confirm-modal.hidden {
+  display: none !important;
 }
 
 .settings-content {
