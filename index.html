@@ -56,7 +56,11 @@
           </svg>
         </div>
       </div>
-      <div id="status-right">
+      <div id="status-right" style="display: flex; align-items: center;">
+        <div id="editor-stats" style="display: none; margin-right: 15px; font-variant-numeric: tabular-nums;">
+          <span id="cursor-stat">Ln 1, Col 1</span>
+          <span id="lines-stat" style="margin-left: 10px;">0 Lines</span>
+        </div>
         <div id="system-stats">
           <span id="cpu-stat">CPU: 0%</span>
           <span id="mem-stat">Mem: 0%</span>

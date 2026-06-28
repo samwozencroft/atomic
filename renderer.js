@@ -84,7 +84,44 @@ require(['vs/editor/editor.main'], function() {
     });
 
     editor.onDidFocusEditorText(() => { activeEditorPane = 'left'; });
-    editorRight.onDidFocusEditorText(() => { activeEditorPane = 'right'; });
+
+// Editor Stats Logic
+const editorStatsDiv = document.getElementById('editor-stats');
+const cursorStatSpan = document.getElementById('cursor-stat');
+const linesStatSpan = document.getElementById('lines-stat');
+
+function updateEditorStats() {
+    const activeEditor = activeEditorPane === 'left' ? editor : editorRight;
+    if (activeEditor && activeEditor.getModel()) {
+        const position = activeEditor.getPosition();
+        const model = activeEditor.getModel();
+        if (position && model) {
+            cursorStatSpan.textContent = `Ln ${position.lineNumber}, Col ${position.column}`;
+            linesStatSpan.textContent = `${model.getLineCount()} Lines`;
+            editorStatsDiv.style.display = 'block';
+            return;
+        }
+    }
+    editorStatsDiv.style.display = 'none';
+}
+
+editor.onDidChangeCursorPosition(updateEditorStats);
+editor.onDidChangeModelContent(updateEditorStats);
+editor.onDidFocusEditorText(() => {
+    activeEditorPane = 'left';
+    updateEditorStats();
+});
+
+editorRight.onDidChangeCursorPosition(updateEditorStats);
+editorRight.onDidChangeModelContent(updateEditorStats);
+editorRight.onDidFocusEditorText(() => {
+    activeEditorPane = 'right';
+    updateEditorStats();
+});
+
+
+    // Apply the correct theme to the newly created editors
+    applyTheme(localStorage.getItem('atomic_theme') || 'dark');
 
     // Add drop zones to editors
     const edContainer = document.getElementById('editor-container');
@@ -589,6 +626,8 @@ async function openFile(filePath, filename, pane = null) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         const activeTab = document.querySelector(`#tabs-${pane} .tab[data-path="${filePath.replace(/\\/g, '\\\\')}"]`);
         if (activeTab) activeTab.classList.add('active');
+
+        if (typeof updateEditorStats === 'function') updateEditorStats();
 
         setTimeout(() => {
             if (editor) editor.layout();
