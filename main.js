@@ -3,10 +3,12 @@ const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 
-let mainWindow;
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
+let mainWindow; // Keep reference to first window for legacy checks if any, though we should try to avoid it
+const windowStates = new Map();
+
+function createWindow(initialState = null) {
+  const win = new BrowserWindow({
     width: 1024,
     height: 768,
     title: "Atomic",
@@ -18,22 +20,31 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile('index.html');
+  if (initialState) {
+    windowStates.set(win.id, initialState);
+  }
+
+  win.loadFile('index.html');
   
-  // Route renderer logs to main process stdout
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-      console.log(`[Renderer] ${message}`);
+  win.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      console.log(`[Renderer ${win.id}] ${message}`);
   });
+
+  win.on('closed', () => {
+    windowStates.delete(win.id);
+  });
+  
+  if (!mainWindow) mainWindow = win;
   
   // Native Menu Template
   const isMac = process.platform === 'darwin';
   const sendMenuAction = (action) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('menu:action', action);
+    const focusedWin = BrowserWindow.getFocusedWindow() || win;
+    if (focusedWin && !focusedWin.isDestroyed()) {
+      focusedWin.webContents.send('menu:action', action);
     }
   };
-
-  const template = [
+const template = [
     ...(isMac ? [{
       label: app.name,
       submenu: [
@@ -150,11 +161,11 @@ function createWindow() {
   autoUpdater.checkForUpdatesAndNotify();
 
   autoUpdater.on('update-available', () => {
-    mainWindow.webContents.send('update_available');
+    BrowserWindow.getAllWindows().forEach(w => w.webContents.send('update_available'));
   });
 
   autoUpdater.on('update-downloaded', () => {
-    mainWindow.webContents.send('update_downloaded');
+    BrowserWindow.getAllWindows().forEach(w => w.webContents.send('update_downloaded'));
   });
 }
 
@@ -246,7 +257,7 @@ app.whenReady().then(() => {
 
   nativeTheme.on('updated', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('theme_updated');
+      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('theme_updated'));
     }
   });
 
@@ -259,9 +270,24 @@ app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// IPC Handlers
-ipcMain.handle('dialog:openDirectory', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+
+ipcMain.on('window:createNew', (event, payload) => {
+  createWindow(payload);
+});
+
+ipcMain.handle('window:getInitialState', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && windowStates.has(win.id)) {
+    const state = windowStates.get(win.id);
+    windowStates.delete(win.id);
+    return state;
+  }
+  return null;
+});
+
+// Existing IPC Handlers
+ipcMain.handle('dialog:openDirectory', async (event) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
     properties: ['openDirectory']
   });
   if (canceled) {
@@ -271,8 +297,8 @@ ipcMain.handle('dialog:openDirectory', async () => {
   }
 });
 
-ipcMain.handle('dialog:openFile', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('dialog:openFile', async (event) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
     properties: ['openFile']
   });
   if (canceled) {
@@ -401,7 +427,7 @@ ipcMain.handle('app:getSystemStats', () => {
 });
 
 ipcMain.handle('dialog:showSaveDialog', async (event, defaultPath) => {
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
     defaultPath,
     properties: ['showOverwriteConfirmation']
   });

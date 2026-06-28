@@ -7,6 +7,41 @@ let openTabsLeft = [];
 let openTabsRight = [];
 let currentWorkspace = null;
 
+// Initialize window state if opened via tear-off
+async function initializeWindow() {
+    if (window.electronAPI && window.electronAPI.getInitialState) {
+        const state = await window.electronAPI.getInitialState();
+        if (state) {
+            document.getElementById('welcome-screen').classList.remove('active');
+            document.getElementById('editor-wrapper').style.display = 'flex';
+            document.getElementById('editor-column-left').style.display = 'flex';
+            document.getElementById('editor-container').style.display = 'block';
+            
+            // Wait for editor to be ready before setting value
+            const checkEditor = setInterval(() => {
+                if (typeof editor !== 'undefined' && editor) {
+                    clearInterval(checkEditor);
+                    
+                    if (state.content !== null && state.content !== undefined) {
+                        currentFilePath = state.filePath;
+                        openTabsLeft.push({ path: state.filePath, name: state.fileName });
+                        isSettingValue = true;
+                        editor.setValue(state.content);
+                        const lang = getLanguageFromFilename(state.fileName);
+                        monaco.editor.setModelLanguage(editor.getModel(), lang);
+                        isSettingValue = false;
+                        renderTabs();
+                    } else {
+                        openFile(state.filePath, state.fileName, 'left');
+                    }
+                }
+            }, 50);
+        }
+    }
+}
+initializeWindow();
+
+
 const modifiedFiles = new Set();
 let isSaving = false;
 
@@ -439,6 +474,7 @@ async function openFile(filePath, filename, pane = null) {
         if (pane === 'left') {
             currentFilePath = filePath;
             activeEditorPane = 'left';
+            document.getElementById('welcome-screen').classList.remove('active');
             document.getElementById('editor-wrapper').style.display = 'flex';
             document.getElementById('editor-column-left').style.display = 'flex';
             document.getElementById('editor-container').style.display = 'block';
@@ -455,6 +491,7 @@ async function openFile(filePath, filename, pane = null) {
         } else {
             currentFilePathRight = filePath;
             activeEditorPane = 'right';
+            document.getElementById('welcome-screen').classList.remove('active');
             document.getElementById('editor-wrapper').style.display = 'flex';
             document.getElementById('editor-column-right').style.display = 'flex';
             document.getElementById('editor-container-right').style.display = 'block';
@@ -625,8 +662,31 @@ function renderTabs() {
                 el.classList.add('dragging');
             });
 
-            el.addEventListener('dragend', () => {
+            el.addEventListener('dragend', (e) => {
                 el.classList.remove('dragging');
+                
+                // Tear-off check: did we drop outside the window?
+                if (e.clientX < 0 || e.clientY < 0 || e.clientX > window.innerWidth || e.clientY > window.innerHeight) {
+                    let contentPayload = null;
+                    if (pane === 'left' && currentFilePath === tab.path) {
+                        contentPayload = editor.getValue();
+                    } else if (pane === 'right' && currentFilePathRight === tab.path) {
+                        contentPayload = editorRight.getValue();
+                    }
+                    
+                    if (window.electronAPI && window.electronAPI.createNewWindow) {
+                        window.electronAPI.createNewWindow({
+                            filePath: tab.path,
+                            fileName: tab.name,
+                            content: contentPayload
+                        });
+                        
+                        // Clean up locally
+                        modifiedFiles.delete(tab.path);
+                        closeTab(tab.path, pane);
+                        renderTabs();
+                    }
+                }
             });
 
             el.innerHTML = `

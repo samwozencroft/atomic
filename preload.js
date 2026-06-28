@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   getSystemStats: () => ipcRenderer.invoke('app:getSystemStats'),
+  createNewWindow: (payload) => ipcRenderer.send('window:createNew', payload),
+  getInitialState: () => ipcRenderer.invoke('window:getInitialState'),
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
