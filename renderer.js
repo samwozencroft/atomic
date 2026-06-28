@@ -431,7 +431,7 @@ async function openFile(filePath, filename, pane = null) {
     if (!pane) {
         if (currentFilePath === filePath) pane = 'left';
         else if (currentFilePathRight === filePath) pane = 'right';
-        else pane = activeEditorPane;
+        else pane = 'left'; // Always default to left pane for new files
     }
 
     const content = await window.electronAPI.readFile(filePath);
@@ -527,17 +527,29 @@ function renderTabs() {
                 let transferContent = null;
                 let wasActive = false;
                 
-                // if it's the current file in the OTHER pane, grab its content and clear it
+                // if it's the current file in the OTHER pane, grab its content and open next tab
                 if (pane === 'left' && currentFilePathRight === p) {
                     wasActive = true;
                     transferContent = editorRight.getValue();
-                    currentFilePathRight = null;
-                    editorRight.setValue('');
+                    if (openTabsRight.length > 0) {
+                        const next = openTabsRight[openTabsRight.length - 1];
+                        currentFilePathRight = null;
+                        openFile(next.path, next.name, 'right');
+                    } else {
+                        currentFilePathRight = null;
+                        editorRight.setValue('');
+                    }
                 } else if (pane === 'right' && currentFilePath === p) {
                     wasActive = true;
                     transferContent = editor.getValue();
-                    currentFilePath = null;
-                    editor.setValue('');
+                    if (openTabsLeft.length > 0) {
+                        const next = openTabsLeft[openTabsLeft.length - 1];
+                        currentFilePath = null;
+                        openFile(next.path, next.name, 'left');
+                    } else {
+                        currentFilePath = null;
+                        editor.setValue('');
+                    }
                 }
                 
                 // Add to current pane openTabs array
@@ -1150,3 +1162,89 @@ if (uploadThemeBtn) {
     }
   });
 }
+
+
+// Split drag and drop logic
+const editorWrapper = document.getElementById('editor-wrapper');
+const splitDropZone = document.getElementById('split-drop-zone');
+
+editorWrapper.addEventListener('dragover', (e) => {
+    const rightPaneClosed = openTabsRight.length === 0 && !currentFilePathRight;
+    const draggable = document.querySelector('.dragging');
+    
+    if (draggable && rightPaneClosed) {
+        e.preventDefault(); // ALWAYS allow drop
+        
+        const rect = editorWrapper.getBoundingClientRect();
+        if (e.clientX > rect.left + (rect.width / 2)) {
+            splitDropZone.style.display = 'block';
+        } else {
+            splitDropZone.style.display = 'none';
+        }
+    }
+}, true); // Use capture to intercept before Monaco
+
+editorWrapper.addEventListener('dragleave', (e) => {
+    if (!editorWrapper.contains(e.relatedTarget)) {
+        splitDropZone.style.display = 'none';
+    }
+}, true);
+
+document.addEventListener('dragend', () => {
+    splitDropZone.style.display = 'none';
+}, true);
+
+editorWrapper.addEventListener('drop', (e) => {
+    const rightPaneClosed = openTabsRight.length === 0 && !currentFilePathRight;
+    const draggable = document.querySelector('.dragging');
+    
+    if (draggable && rightPaneClosed) {
+        const rect = editorWrapper.getBoundingClientRect();
+        if (e.clientX > rect.left + (rect.width / 2)) {
+            e.preventDefault();
+            e.stopPropagation(); // prevent Monaco from eating it
+            splitDropZone.style.display = 'none';
+            
+            const p = draggable.dataset.path;
+            const n = draggable.dataset.name;
+            
+            // Remove from left
+            openTabsLeft = openTabsLeft.filter(t => t.path !== p);
+            let transferContent = null;
+            
+            if (currentFilePath === p) {
+                transferContent = editor.getValue();
+                if (openTabsLeft.length > 0) {
+                    const next = openTabsLeft[openTabsLeft.length - 1];
+                    currentFilePath = null; // force reload
+                    openFile(next.path, next.name, 'left');
+                } else {
+                    currentFilePath = null;
+                    editor.setValue('');
+                }
+            }
+            
+            // Open on right
+            currentFilePathRight = p;
+            openTabsRight.push({path: p, name: n});
+            
+            document.getElementById('editor-column-right').style.display = 'flex';
+            document.getElementById('editor-container-right').style.display = 'block';
+            
+            if (transferContent !== null) {
+                isSettingValue = true;
+                editorRight.setValue(transferContent);
+                monaco.editor.setModelLanguage(editorRight.getModel(), getLanguageFromFilename(n));
+                isSettingValue = false;
+            } else {
+                openFile(p, n, 'right');
+            }
+            
+            renderTabs();
+            setTimeout(() => {
+                if (editor) editor.layout();
+                if (editorRight) editorRight.layout();
+            }, 50);
+        }
+    }
+}, true);

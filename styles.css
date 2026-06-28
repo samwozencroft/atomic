@@ -598,3 +598,16 @@ body {
 #update-restart-btn.hidden {
   display: none;
 }
+
+#split-drop-zone {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 2px dashed rgba(255, 255, 255, 0.2);
+  z-index: 1000;
+  display: none;
+  pointer-events: none;
+}
