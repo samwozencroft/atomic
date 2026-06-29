@@ -237,6 +237,9 @@ async function saveCurrentFile() {
         // Reload tree to show newly saved file if it's in workspace
         if (currentWorkspace && activePath.startsWith(currentWorkspace)) {
             loadDirectory(currentWorkspace);
+            if (gitModal && !gitModal.classList.contains('hidden')) {
+                updateGitStatus().then(() => renderGitModalContent());
+            }
         }
         
         renderTabs();
@@ -1055,6 +1058,39 @@ let activeGitTab = 'changes';
 let gitDiffEditor = null;
 let selectedGitFilePath = null;
 let gitCheckedFiles = null;
+let gitPollInterval = null;
+let lastKnownGitFiles = null;
+
+function startGitPolling() {
+  if (gitPollInterval) clearInterval(gitPollInterval);
+  gitPollInterval = setInterval(async () => {
+    if (gitModal && !gitModal.classList.contains('hidden') && activeGitTab === 'changes' && currentWorkspace) {
+      const status = await window.electronAPI.gitGetStatus(currentWorkspace);
+      if (status && status.isRepo) {
+        // Compare files & statuses to check for modification changes
+        const currentPaths = status.files.map(f => `${f.path}:${f.indexStatus}:${f.workingTreeStatus}`).join(',');
+        const renderedPaths = Array.from(gitModalBody.querySelectorAll('.git-list-item')).map(el => {
+          const p = el.getAttribute('data-path');
+          const badge = el.querySelector('[class^="git-badge-"]');
+          const badgeText = badge ? badge.textContent : '';
+          return `${p}:${badgeText}`;
+        }).join(',');
+        
+        if (currentPaths !== renderedPaths) {
+          await updateGitStatus();
+          await renderGitModalContent();
+        }
+      }
+    }
+  }, 3000);
+}
+
+function stopGitPolling() {
+  if (gitPollInterval) {
+    clearInterval(gitPollInterval);
+    gitPollInterval = null;
+  }
+}
 
 // Initialize Git Tab Listeners
 document.querySelectorAll('.git-tab-btn').forEach(btn => {
@@ -1148,14 +1184,25 @@ async function renderGitModalContent() {
     if (gitCheckedFiles === null) {
       gitCheckedFiles = new Set(status.files.map(f => f.path));
     } else {
+      // Add any newly modified file that appeared since last check to selection by default
+      const currentPaths = status.files.map(f => f.path);
+      for (const p of currentPaths) {
+        if (!lastKnownGitFiles || !lastKnownGitFiles.has(p)) {
+          gitCheckedFiles.add(p);
+        }
+      }
+
       // Keep only files that actually still exist in current status list
-      const currentPaths = new Set(status.files.map(f => f.path));
+      const currentPathsSet = new Set(currentPaths);
       for (const p of gitCheckedFiles) {
-        if (!currentPaths.has(p)) {
+        if (!currentPathsSet.has(p)) {
           gitCheckedFiles.delete(p);
         }
       }
     }
+    
+    // Store current files list for next check
+    lastKnownGitFiles = new Set(status.files.map(f => f.path));
 
     const allChecked = status.files.length > 0 && status.files.every(f => gitCheckedFiles.has(f.path));
 
@@ -1711,6 +1758,7 @@ if (gitBtn) {
   gitBtn.addEventListener('click', async () => {
     if (gitModal) gitModal.classList.remove('hidden');
     await renderGitModalContent();
+    startGitPolling();
     if (currentWorkspace) {
       window.electronAPI.gitFetch(currentWorkspace).then(async (res) => {
         if (res && res.success) {
@@ -1724,6 +1772,7 @@ if (gitBtn) {
 if (closeGitModalBtn) {
   closeGitModalBtn.addEventListener('click', () => {
     if (gitModal) gitModal.classList.add('hidden');
+    stopGitPolling();
   });
 }
 
@@ -1738,6 +1787,7 @@ if (gitModal) {
   gitModal.addEventListener('click', (e) => {
     if (e.target === gitModal) {
       gitModal.classList.add('hidden');
+      stopGitPolling();
     }
   });
 }
