@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.svg" width="128" height="128" alt="Atomic Logo" />
+</p>
+
 # Atomic
 
 A lightweight, modern text editor built on Electron 30 and Node 20. Atomic utilizes the Monaco Editor engine (the same technology powering VS Code) to deliver an incredibly fast and robust coding experience without the heavy legacy baggage.
@@ -39,6 +43,12 @@ To run the application locally from source:
    ```bash
    npm start
    ```
+
+---
+
+## Credits
+
+- **Logo & Icon Design**: Created by [@elisehindes](https://github.com/elisehindes).
 
 ---
 
