@@ -1015,6 +1015,10 @@ if (toggleWarnClose) {
   });
 }
 
+// Git Integration toggle preference
+const toggleGit = document.getElementById('toggle-git');
+const showGitPref = localStorage.getItem('atomic_show_git') !== 'false';
+
 const reportIssueBtn = document.getElementById('report-issue-btn');
 if (reportIssueBtn) {
   reportIssueBtn.addEventListener('click', () => {
@@ -1028,6 +1032,19 @@ const gitStatusText = document.getElementById('git-status-text');
 const gitModal = document.getElementById('git-modal');
 const closeGitModalBtn = document.getElementById('close-git-modal');
 const refreshGitBtn = document.getElementById('refresh-git-btn');
+
+if (gitBtn) {
+  gitBtn.style.display = showGitPref ? 'flex' : 'none';
+}
+if (toggleGit) {
+  toggleGit.checked = showGitPref;
+  toggleGit.addEventListener('change', (e) => {
+    const enabled = e.target.checked;
+    localStorage.setItem('atomic_show_git', enabled);
+    if (gitBtn) gitBtn.style.display = enabled ? 'flex' : 'none';
+    if (!enabled && gitModal) gitModal.classList.add('hidden');
+  });
+}
 const gitModalBody = document.getElementById('git-modal-body');
 
 async function updateGitStatus() {
