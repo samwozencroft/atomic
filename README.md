@@ -30,6 +30,16 @@ After running the command, simply double-click `Atomic.app` to launch it safely!
 
 ---
 
+## 🛡️ Windows Troubleshooting: SmartScreen Warning
+
+When downloading and installing the `.exe` setup on Windows, Windows Defender SmartScreen will display a blue and white warning box stating **"Windows protected your PC"** because the application binary is currently unsigned.
+
+**To run the app:**
+1. Click **"More info"** on the blue SmartScreen popup window.
+2. Click the **"Run anyway"** button that appears at the bottom right.
+
+---
+
 ## Local Development
 
 To run the application locally from source:
