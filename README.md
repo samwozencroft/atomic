@@ -56,6 +56,30 @@ To run the application locally from source:
 
 ---
 
+---
+Git Panel
+<img width="843" height="638" alt="image" src="https://github.com/user-attachments/assets/bc515da7-3586-4724-af62-6523e5c4e8a4" />
+---
+
+terminal
+<img width="776" height="596" alt="image" src="https://github.com/user-attachments/assets/7487bbb0-beab-4a88-bfb8-6faff92af3f4" />
+
+---
+
+file orchestration
+
+<img width="246" height="522" alt="image" src="https://github.com/user-attachments/assets/d523955f-2a2e-45ee-ab93-3f473b79936f" />
+
+---
+
+theme customisation and explorer
+
+<img width="490" height="371" alt="image" src="https://github.com/user-attachments/assets/ab9d21da-4981-4349-8002-4068edcf555c" />
+
+
+---
+
+---
 ## Credits
 
 - **Logo & Icon Design**: Created by [@elisehindes](https://github.com/elisehindes).
