@@ -630,4 +630,73 @@ ipcMain.handle('git:merge', async (event, { dirPath, branchName }) => {
   }
 });
 
+ipcMain.handle('fs:searchWorkspace', async (event, { dirPath, query }) => {
+  if (!dirPath || !query || query.trim().length === 0) return [];
+  const results = [];
+  const q = query.toLowerCase().trim();
+  const maxResults = 60;
+
+  const ignoredDirs = new Set(['node_modules', '.git', '.next', '.cache', 'dist', 'build', 'out', '.output', '.storybook']);
+  const binaryExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.pdf', '.zip', '.tar', '.gz', '.7z', '.exe', '.dll', '.so', '.dylib', '.pyc', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.mov', '.lock', '.sqlite', '.db', '.DS_Store']);
+
+  async function walk(currentDir) {
+    if (results.length >= maxResults) return;
+    try {
+      const entries = await fs.readdir(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (results.length >= maxResults) break;
+        if (ignoredDirs.has(entry.name)) continue;
+        
+        const fullPath = path.join(currentDir, entry.name);
+        const relPath = path.relative(dirPath, fullPath);
+
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (binaryExts.has(ext)) continue;
+
+          // 1. Match File Name
+          if (entry.name.toLowerCase().includes(q) || relPath.toLowerCase().includes(q)) {
+            results.push({
+              type: 'file',
+              name: entry.name,
+              relPath,
+              fullPath
+            });
+          }
+
+          // 2. Match File Text Content
+          try {
+            const stat = await fs.stat(fullPath);
+            if (stat.size < 1000000) { // < 1MB
+              const content = await fs.readFile(fullPath, 'utf-8');
+              if (content.toLowerCase().includes(q)) {
+                const lines = content.split('\n');
+                for (let i = 0; i < lines.length; i++) {
+                  if (results.length >= maxResults) break;
+                  if (lines[i].toLowerCase().includes(q)) {
+                    results.push({
+                      type: 'text',
+                      name: entry.name,
+                      relPath,
+                      fullPath,
+                      lineNumber: i + 1,
+                      lineText: lines[i].trim()
+                    });
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (err) {}
+  }
+
+  await walk(dirPath);
+  return results;
+});
+
+
 

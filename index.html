@@ -16,6 +16,18 @@
         </div>
         <div id="sidebar-resizer" class="resizer-x"></div>
         <div class="main-content">
+            <div class="topbar-left">
+                <div id="search-container" class="search-container">
+                    <button id="search-toggle-btn" class="icon-btn" title="Search Workspace">
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                    </button>
+                    <input type="text" id="search-input" class="search-input" placeholder="Search files and text..." style="display: none;">
+                    <div id="search-results" class="search-results-dropdown hidden"></div>
+                </div>
+            </div>
             <div class="topbar-actions">
                 <button id="toggle-sidebar-btn" class="icon-btn" title="Toggle Sidebar">
                     <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">

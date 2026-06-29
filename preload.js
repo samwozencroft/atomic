@@ -39,5 +39,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitFetch: (dirPath) => ipcRenderer.invoke('git:fetch', dirPath),
   gitStash: (payload) => ipcRenderer.invoke('git:stash', payload),
   gitStashPop: (dirPath) => ipcRenderer.invoke('git:stashPop', dirPath),
-  gitMerge: (payload) => ipcRenderer.invoke('git:merge', payload)
+  gitMerge: (payload) => ipcRenderer.invoke('git:merge', payload),
+  searchWorkspace: (payload) => ipcRenderer.invoke('fs:searchWorkspace', payload)
 });

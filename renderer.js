@@ -1819,3 +1819,152 @@ document.addEventListener('mouseup', () => {
         if (editorRight) editorRight.layout();
     }
 });
+
+// Workspace Search bar logic
+const searchContainer = document.getElementById('search-container');
+const searchToggleBtn = document.getElementById('search-toggle-btn');
+const searchInput = document.getElementById('search-input');
+const searchResults = document.getElementById('search-results');
+let searchDebounceTimeout = null;
+
+if (searchToggleBtn && searchInput && searchContainer) {
+  function closeSearch() {
+    searchContainer.classList.remove('active');
+    searchInput.style.display = 'none';
+    if (searchResults) {
+      searchResults.classList.add('hidden');
+      searchResults.innerHTML = '';
+    }
+  }
+
+  function openSearch() {
+    searchContainer.classList.add('active');
+    searchInput.style.display = 'block';
+    setTimeout(() => {
+      searchInput.focus();
+      searchInput.select();
+    }, 50);
+    if (searchInput.value.trim().length > 0) {
+      triggerSearch(searchInput.value.trim());
+    }
+  }
+
+  searchToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isActive = searchContainer.classList.contains('active');
+    if (isActive) {
+      closeSearch();
+    } else {
+      openSearch();
+    }
+  });
+
+  searchInput.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  searchInput.addEventListener('input', (e) => {
+    const val = e.target.value;
+    clearTimeout(searchDebounceTimeout);
+    searchDebounceTimeout = setTimeout(() => {
+      triggerSearch(val);
+    }, 250);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!searchContainer.contains(e.target) && (!searchResults || !searchResults.contains(e.target))) {
+      closeSearch();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && searchContainer.classList.contains('active')) {
+      closeSearch();
+    }
+  });
+}
+
+function highlightMatch(text, query) {
+  if (!text || !query) return text || '';
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escaped})`, 'gi');
+  return text.replace(regex, '<mark class="search-highlight">$1</mark>');
+}
+
+async function triggerSearch(query) {
+  if (!searchResults) return;
+  if (!query || query.trim().length === 0) {
+    searchResults.classList.add('hidden');
+    searchResults.innerHTML = '';
+    return;
+  }
+
+  searchResults.classList.remove('hidden');
+  searchResults.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; padding: 12px; text-align: center;">Searching...</div>';
+
+  if (!currentWorkspace) {
+    searchResults.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; padding: 12px; text-align: center;">Open a folder to search workspace.</div>';
+    return;
+  }
+
+  const results = await window.electronAPI.searchWorkspace({ dirPath: currentWorkspace, query });
+
+  if (!results || results.length === 0) {
+    searchResults.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; padding: 12px; text-align: center;">No matching files or text found.</div>';
+    return;
+  }
+
+  let html = '';
+  results.forEach(item => {
+    const highlightedName = highlightMatch(item.name, query);
+    const dirPart = item.relPath.includes('/') ? item.relPath.substring(0, item.relPath.lastIndexOf('/') + 1) : '';
+
+    if (item.type === 'file') {
+      html += `
+        <div class="search-result-item" data-path="${item.fullPath}" data-name="${item.name}">
+          <div class="search-result-header">
+            <span class="search-file-title">📄 ${highlightedName}</span>
+            <span class="search-badge file-badge">File</span>
+          </div>
+          <div class="search-result-path">${item.relPath}</div>
+        </div>
+      `;
+    } else if (item.type === 'text') {
+      const highlightedLine = highlightMatch(item.lineText, query);
+      html += `
+        <div class="search-result-item" data-path="${item.fullPath}" data-name="${item.name}" data-line="${item.lineNumber}">
+          <div class="search-result-header">
+            <span class="search-file-title">📝 ${highlightedName}</span>
+            <span class="search-badge line-badge">Ln ${item.lineNumber}</span>
+          </div>
+          <div class="search-result-path">${dirPart}</div>
+          <div class="search-result-code">${highlightedLine}</div>
+        </div>
+      `;
+    }
+  });
+
+  searchResults.innerHTML = html;
+
+  const items = searchResults.querySelectorAll('.search-result-item');
+  items.forEach(item => {
+    item.addEventListener('click', () => {
+      const fullPath = item.getAttribute('data-path');
+      const name = item.getAttribute('data-name');
+      const line = item.getAttribute('data-line');
+      if (fullPath) {
+        openFile(fullPath, name);
+        if (line && editor) {
+          setTimeout(() => {
+            const lineNum = parseInt(line, 10);
+            if (!isNaN(lineNum)) {
+              editor.revealLineInCenter(lineNum);
+              editor.setPosition({ lineNumber: lineNum, column: 1 });
+            }
+          }, 150);
+        }
+        searchResults.classList.add('hidden');
+      }
+    });
+  });
+}
