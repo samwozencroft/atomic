@@ -506,6 +506,25 @@ ipcMain.handle('git:getStatus', async (event, dirPath) => {
   }
 });
 
+ipcMain.handle('git:getSyncStatus', async (event, dirPath) => {
+  if (!dirPath) return { success: false, ahead: 0, behind: 0 };
+  try {
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const { stdout: aheadOut } = await execFileAsync('git', ['rev-list', '--count', '@{u}..HEAD'], { cwd: dirPath });
+      ahead = parseInt(aheadOut.trim()) || 0;
+    } catch (e) {}
+    try {
+      const { stdout: behindOut } = await execFileAsync('git', ['rev-list', '--count', 'HEAD..@{u}'], { cwd: dirPath });
+      behind = parseInt(behindOut.trim()) || 0;
+    } catch (e) {}
+    return { success: true, ahead, behind };
+  } catch (err) {
+    return { success: false, ahead: 0, behind: 0, error: err.message };
+  }
+});
+
 ipcMain.handle('git:stageFile', async (event, { dirPath, filePath }) => {
   try {
     await execFileAsync('git', ['add', filePath], { cwd: dirPath });
@@ -524,10 +543,24 @@ ipcMain.handle('git:unstageFile', async (event, { dirPath, filePath }) => {
   }
 });
 
-ipcMain.handle('git:commit', async (event, { dirPath, message }) => {
+ipcMain.handle('git:commit', async (event, { dirPath, message, files }) => {
   if (!dirPath || !message) return { success: false, error: 'Missing parameter' };
   try {
-    await execFileAsync('git', ['add', '-A'], { cwd: dirPath });
+    // Unstage everything first
+    try {
+      await execFileAsync('git', ['reset'], { cwd: dirPath });
+    } catch (e) {}
+
+    // Stage only the selected files
+    if (files && files.length > 0) {
+      for (const file of files) {
+        await execFileAsync('git', ['add', file], { cwd: dirPath });
+      }
+    } else {
+      // Fallback: stage nothing if empty array passed
+      return { success: false, error: 'No files selected for commit' };
+    }
+
     const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd: dirPath });
     return { success: true, stdout };
   } catch (err) {
@@ -627,6 +660,109 @@ ipcMain.handle('git:merge', async (event, { dirPath, branchName }) => {
   try {
     const { stdout } = await execFileAsync('git', ['merge', branchName], { cwd: dirPath });
     return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:getHistory', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No workspace folder opened' };
+  try {
+    const { stdout } = await execFileAsync('git', ['log', '-n', '30', '--pretty=format:%h|%an|%ar|%s'], { cwd: dirPath });
+    const commits = stdout.split('\n').filter(Boolean).map(line => {
+      const [hash, author, date, message] = line.split('|');
+      return { hash, author, date, message };
+    });
+    return { success: true, commits };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:getGraph', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No workspace folder opened' };
+  try {
+    const { stdout } = await execFileAsync('git', ['log', '--graph', '--oneline', '--all', '--decorate', '-n', '30'], { cwd: dirPath });
+    return { success: true, graph: stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:getFileDiff', async (event, { dirPath, filePath, staged }) => {
+  if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
+  try {
+    // Get raw original file from git (show HEAD:file)
+    let original = '';
+    try {
+      const { stdout } = await execFileAsync('git', ['show', `HEAD:${filePath}`], { cwd: dirPath });
+      original = stdout;
+    } catch (e) {
+      // File might be untracked/newly created, so original is empty
+    }
+
+    // Get current working version
+    const fsSync = require('node:fs');
+    const fullPath = path.join(dirPath, filePath);
+    let current = '';
+    if (fsSync.existsSync(fullPath)) {
+      current = fsSync.readFileSync(fullPath, 'utf8');
+    }
+
+    return { success: true, original, current };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:stagePath', async (event, { dirPath, filePath }) => {
+  if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
+  try {
+    await execFileAsync('git', ['add', filePath], { cwd: dirPath });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:unstagePath', async (event, { dirPath, filePath }) => {
+  if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
+  try {
+    await execFileAsync('git', ['reset', 'HEAD', '--', filePath], { cwd: dirPath });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:getBlame', async (event, { dirPath, filePath }) => {
+  if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
+  try {
+    const { stdout } = await execFileAsync('git', ['blame', '--porcelain', filePath], { cwd: dirPath });
+    return { success: true, blame: stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:getConflicts', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No workspace folder opened' };
+  try {
+    const { stdout } = await execFileAsync('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: dirPath });
+    const conflicts = stdout.split('\n').filter(Boolean);
+    return { success: true, conflicts };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:resolveConflict', async (event, { dirPath, filePath, choice }) => {
+  if (!dirPath || !filePath || !choice) return { success: false, error: 'Missing parameters' };
+  try {
+    const mode = choice === 'ours' ? '--ours' : '--theirs';
+    await execFileAsync('git', ['checkout', mode, '--', filePath], { cwd: dirPath });
+    await execFileAsync('git', ['add', filePath], { cwd: dirPath });
+    return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }

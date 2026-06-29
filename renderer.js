@@ -1051,6 +1051,21 @@ const gitModal = document.getElementById('git-modal');
 const closeGitModalBtn = document.getElementById('close-git-modal');
 const refreshGitBtn = document.getElementById('refresh-git-btn');
 
+let activeGitTab = 'changes';
+let gitDiffEditor = null;
+let selectedGitFilePath = null;
+let gitCheckedFiles = null;
+
+// Initialize Git Tab Listeners
+document.querySelectorAll('.git-tab-btn').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    document.querySelectorAll('.git-tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeGitTab = btn.getAttribute('data-tab');
+    renderGitModalContent();
+  });
+});
+
 if (gitBtn) {
   gitBtn.style.display = showGitPref ? 'flex' : 'none';
 }
@@ -1091,7 +1106,14 @@ async function updateGitStatus() {
 
 async function renderGitModalContent() {
   if (!gitModalBody) return;
-  gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">Loading repository status...</div>';
+  
+  // Clean up existing Monaco diff editor if any
+  if (gitDiffEditor) {
+    gitDiffEditor.dispose();
+    gitDiffEditor = null;
+  }
+
+  gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">Loading Git repository data...</div>';
 
   if (!currentWorkspace) {
     gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">No workspace folder is currently open.<br><br><button class="btn" id="git-modal-open-folder-btn">Open a Folder</button></div>';
@@ -1121,259 +1143,581 @@ async function renderGitModalContent() {
     return;
   }
 
-  // Get branches
-  const branchRes = await window.electronAPI.gitGetBranches(currentWorkspace);
-  const branches = (branchRes && branchRes.success && branchRes.branches) ? branchRes.branches : [{ name: status.branch, current: true }];
+  // Render tab contents
+  if (activeGitTab === 'changes') {
+    if (gitCheckedFiles === null) {
+      gitCheckedFiles = new Set(status.files.map(f => f.path));
+    } else {
+      // Keep only files that actually still exist in current status list
+      const currentPaths = new Set(status.files.map(f => f.path));
+      for (const p of gitCheckedFiles) {
+        if (!currentPaths.has(p)) {
+          gitCheckedFiles.delete(p);
+        }
+      }
+    }
 
-  let branchOptions = branches.map(b => `<option value="${b.name}" ${b.current ? 'selected' : ''}>${b.name}</option>`).join('');
-  branchOptions += '<option value="__create_new__">+ Create New Branch...</option>';
-  branchOptions += '<option value="__merge_branch__">⚡ Merge Branch into ' + status.branch + '...</option>';
+    const allChecked = status.files.length > 0 && status.files.every(f => gitCheckedFiles.has(f.path));
 
-  let html = `
-    <div class="setting-item" style="margin-bottom: 15px;">
-      <span style="color: var(--text-muted);">Current Branch</span>
-      <select id="git-branch-select" style="background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer;">
-        ${branchOptions}
-      </select>
-    </div>
-    <div class="setting-item" style="margin-bottom: 15px;">
-      <span style="color: var(--text-muted);">Changed Files</span>
-      <span style="font-weight: 500; color: var(--text-normal);">${status.stats.total}</span>
-    </div>
-  `;
+    // Get branches and sync status
+    const branchRes = await window.electronAPI.gitGetBranches(currentWorkspace);
+    const branches = (branchRes && branchRes.success && branchRes.branches) ? branchRes.branches : [{ name: status.branch, current: true }];
 
-  if (status.files.length === 0) {
-    html += '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0; border-top: 1px solid var(--border-color);">Working tree clean. No changes detected.</div>';
-  } else {
-    html += '<div style="border-top: 1px solid var(--border-color); padding-top: 15px;">';
-    html += '<div style="font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 10px;">Changed Files</div>';
-    html += '<div class="git-file-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto;">';
+    const syncStatus = await window.electronAPI.gitGetSyncStatus(currentWorkspace);
+    const aheadCount = (syncStatus && syncStatus.success) ? syncStatus.ahead : 0;
+    const behindCount = (syncStatus && syncStatus.success) ? syncStatus.behind : 0;
 
-    status.files.forEach(file => {
-      let badgeLetter = 'M';
-      if (file.status === 'added') badgeLetter = 'A';
-      else if (file.status === 'deleted') badgeLetter = 'D';
-      else if (file.status === 'untracked') badgeLetter = 'U';
+    let branchOptions = branches.map(b => `<option value="${b.name}" ${b.current ? 'selected' : ''}>${b.name}</option>`).join('');
+    branchOptions += '<option value="__create_new__">+ Create New Branch...</option>';
+    branchOptions += '<option value="__merge_branch__">⚡ Merge Branch into ' + status.branch + '...</option>';
 
-      html += `
-        <div class="git-file-item" data-path="${file.fullPath}" data-rel="${file.path}">
-          <div class="git-file-info">
-            <span class="git-file-badge git-badge-${badgeLetter}">${badgeLetter}</span>
-            <span style="font-size: 13px; color: var(--text-normal); font-family: monospace;">${file.path}</span>
+    let filesHtml = status.files.map(file => {
+      const isChecked = gitCheckedFiles.has(file.path);
+      const displayStatus = file.indexStatus !== ' ' && file.indexStatus !== '?' ? file.indexStatus : (file.workingTreeStatus || 'M');
+      return `
+        <div class="git-list-item ${selectedGitFilePath === file.path ? 'selected' : ''}" data-path="${file.path}">
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
+            <input type="checkbox" ${isChecked ? 'checked' : ''} class="git-checkbox file-select-checkbox" data-path="${file.path}" style="cursor: pointer;">
+            <span style="font-family: monospace; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;" title="${file.path}">${file.path}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="git-badge-${displayStatus}">${displayStatus}</span>
           </div>
         </div>
       `;
-    });
+    }).join('');
 
-    html += '</div></div>';
+    gitModalBody.innerHTML = `
+      <div class="git-staged-unstaged-container">
+        <div class="git-files-column">
+          <!-- Branch Selector & Sync Toolbar -->
+          <div style="margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+              <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Branch:</span>
+              <select id="git-branch-select" style="flex: 1; min-width: 0; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; font-size: 12px; cursor: pointer; outline: none;">
+                ${branchOptions}
+              </select>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button id="git-sync-fetch-btn" class="btn" style="flex: 1; padding: 4px; font-size: 11px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Fetch</button>
+              <button id="git-sync-pull-btn" class="btn" style="flex: 1; padding: 4px; font-size: 11px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Pull ${behindCount > 0 ? `(${behindCount})` : ''}</button>
+              <button id="git-sync-push-btn" class="btn" style="flex: 1; padding: 4px; font-size: 11px; background: var(--accent-blue); border: none; color: #fff; cursor: pointer; font-weight: 500;">Push ${aheadCount > 0 ? `(${aheadCount})` : ''}</button>
+            </div>
+            <div style="font-size: 11px; text-align: center; margin-top: 2px;">
+              ${
+                behindCount > 0 && aheadCount > 0
+                  ? `<span style="color: #d19a66;">⇄ ${behindCount} commits behind, ${aheadCount} ahead</span>`
+                  : behindCount > 0
+                  ? `<span style="color: #61afef;">↓ ${behindCount} commits available to pull</span>`
+                  : aheadCount > 0
+                  ? `<span style="color: #98c379;">↑ ${aheadCount} commits to push</span>`
+                  : `<span style="color: var(--text-muted);">✓ Up to date with origin</span>`
+              }
+            </div>
+          </div>
 
-    // Commit section
-    html += `
-      <div style="border-top: 1px solid var(--border-color); margin-top: 15px; padding-top: 15px;">
-        <div style="font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 8px;">Commit Changes</div>
-        <input type="text" id="git-commit-input" placeholder="Message (e.g. Update features)..." style="width: 100%; padding: 8px; margin-bottom: 10px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; font-size: 12px;">
-        <button id="git-commit-btn" class="btn" style="background: var(--accent-blue); color: #fff; border: none; width: 100%; padding: 8px; font-weight: 500; cursor: pointer;">Commit All Changes</button>
+          <!-- Commit form -->
+          <div style="margin-bottom: 5px;">
+            <input type="text" id="git-commit-input" placeholder="Commit message..." style="width: 100%; padding: 6px 10px; margin-bottom: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; font-size: 12px; outline: none;">
+            <button id="git-commit-btn" class="btn" style="background: var(--accent-blue); color: #fff; border: none; width: 100%; padding: 6px; font-weight: 500; cursor: pointer; font-size: 12px;">Commit Changes</button>
+          </div>
+
+          <div style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 15px;">
+            <div>
+              <div class="git-file-list-header">
+                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                  <input type="checkbox" id="git-check-all-btn" ${allChecked ? 'checked' : ''} style="cursor: pointer;">
+                  <span>${status.files.length} Changed Files</span>
+                </label>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                ${filesHtml || '<div style="color: var(--text-muted); font-size: 11px; padding: 4px;">No changes detected</div>'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="git-diff-column">
+          <div style="padding: 6px 12px; background: var(--bg-darker); border-bottom: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+            <span id="git-diff-header-title">${selectedGitFilePath ? selectedGitFilePath : 'Select a file to view diff'}</span>
+          </div>
+          <div id="git-diff-editor-container" style="flex: 1; width: 100%;"></div>
+        </div>
       </div>
     `;
-  }
 
-  // Sync & Stash Section
-  html += `
-    <div style="border-top: 1px solid var(--border-color); margin-top: 15px; padding-top: 15px;">
-      <div style="font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 8px;">Remote Sync & Stash</div>
-      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-        <button id="git-fetch-btn" class="btn" style="flex: 1; padding: 6px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Fetch</button>
-        <button id="git-pull-btn" class="btn" style="flex: 1; padding: 6px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Pull</button>
-        <button id="git-push-btn" class="btn" style="flex: 1; padding: 6px; font-size: 12px; background: var(--accent-blue); border: none; color: #fff; cursor: pointer; font-weight: 500;">Push</button>
-      </div>
-      <div style="display: flex; gap: 8px;">
-        <button id="git-stash-btn" class="btn" style="flex: 1; padding: 6px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Stash Changes</button>
-        <button id="git-pop-btn" class="btn" style="flex: 1; padding: 6px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Pop Stash</button>
-      </div>
-    </div>
-  `;
+    // Initialize Monaco Diff Editor if a file is selected
+    if (selectedGitFilePath && window.monaco) {
+      const diffContainer = document.getElementById('git-diff-editor-container');
+      if (diffContainer) {
+        gitDiffEditor = monaco.editor.createDiffEditor(diffContainer, {
+          theme: 'atom-one-dark',
+          readOnly: true,
+          originalEditable: false,
+          automaticLayout: true,
+          renderSideBySide: true,
+          minimap: { enabled: false }
+        });
 
-  html += `
-    <div style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; justify-content: center;">
-      <button id="refresh-git-btn" class="btn" style="background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); width: 100%;">Refresh Status</button>
-    </div>
-  `;
+        // Load diff content
+        window.electronAPI.gitGetFileDiff({ dirPath: currentWorkspace, filePath: selectedGitFilePath }).then(res => {
+          if (res && res.success && gitDiffEditor) {
+            const originalModel = monaco.editor.createModel(res.original, 'text/plain');
+            const currentModel = monaco.editor.createModel(res.current, 'text/plain');
+            gitDiffEditor.setModel({
+              original: originalModel,
+              modified: currentModel
+            });
+          }
+        });
+      }
+    }
 
-  gitModalBody.innerHTML = html;
+    // Attach list item selection listeners
+    gitModalBody.querySelectorAll('.git-list-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('git-checkbox')) return;
+        selectedGitFilePath = item.getAttribute('data-path');
+        renderGitModalContent();
+      });
+    });
 
-  const branchSelect = gitModalBody.querySelector('#git-branch-select');
-  if (branchSelect) {
-    branchSelect.addEventListener('change', async (e) => {
-      const selected = e.target.value;
-      if (selected === '__create_new__') {
-        const newName = prompt('Enter new branch name:');
-        if (newName && newName.trim()) {
-          const res = await window.electronAPI.gitCreateBranch({ dirPath: currentWorkspace, branchName: newName.trim() });
-          if (!res.success) alert(`Failed to create branch: ${res.error}`);
-          await updateGitStatus();
-          await renderGitModalContent();
+    // Checkbox toggle handlers
+    gitModalBody.querySelectorAll('.file-select-checkbox').forEach(box => {
+      box.addEventListener('change', (e) => {
+        const pathVal = box.getAttribute('data-path');
+        if (box.checked) {
+          gitCheckedFiles.add(pathVal);
         } else {
-          branchSelect.value = status.branch;
+          gitCheckedFiles.delete(pathVal);
         }
-      } else if (selected === '__merge_branch__') {
-        const otherBranches = branches.filter(b => !b.current).map(b => b.name);
-        if (otherBranches.length === 0) {
-          alert('No other branches found to merge.');
-          branchSelect.value = status.branch;
+        // Update check-all status without full rebuild to keep editor loaded
+        const masterBox = document.getElementById('git-check-all-btn');
+        if (masterBox) {
+          masterBox.checked = status.files.every(f => gitCheckedFiles.has(f.path));
+        }
+      });
+    });
+
+    // Master checkbox toggle
+    const masterBox = document.getElementById('git-check-all-btn');
+    if (masterBox) {
+      masterBox.addEventListener('change', (e) => {
+        if (masterBox.checked) {
+          status.files.forEach(f => gitCheckedFiles.add(f.path));
+        } else {
+          gitCheckedFiles.clear();
+        }
+        // Update all checkbox elements in list
+        gitModalBody.querySelectorAll('.file-select-checkbox').forEach(box => {
+          box.checked = masterBox.checked;
+        });
+      });
+    }
+
+    // Attach commit action
+    const commitBtn = document.getElementById('git-commit-btn');
+    const commitInput = document.getElementById('git-commit-input');
+    if (commitBtn && commitInput) {
+      commitBtn.addEventListener('click', async () => {
+        const msg = commitInput.value.trim();
+        if (!msg) {
+          alert('Please enter a commit message.');
           return;
         }
-        const targetMerge = prompt(`Branches available to merge into ${status.branch}:\n\n${otherBranches.join('\n')}\n\nEnter branch name to merge:`);
-        if (targetMerge && targetMerge.trim()) {
-          const res = await window.electronAPI.gitMerge({ dirPath: currentWorkspace, branchName: targetMerge.trim() });
-          if (res.success) {
-            alert(`Merged ${targetMerge} successfully!`);
-          } else {
-            alert(`Merge failed: ${res.error}`);
-          }
+        if (gitCheckedFiles.size === 0) {
+          alert('Please select at least one file to commit.');
+          return;
+        }
+        commitBtn.disabled = true;
+        commitBtn.textContent = 'Committing...';
+        const res = await window.electronAPI.gitCommit({
+          dirPath: currentWorkspace,
+          message: msg,
+          files: Array.from(gitCheckedFiles)
+        });
+        if (res.success) {
+          gitCheckedFiles = null;
+          selectedGitFilePath = null;
           await updateGitStatus();
           await renderGitModalContent();
         } else {
-          branchSelect.value = status.branch;
+          alert(`Commit failed: ${res.error}`);
+          commitBtn.disabled = false;
+          commitBtn.textContent = 'Commit Changes';
         }
-      } else if (selected !== status.branch) {
-        const res = await window.electronAPI.gitCheckoutBranch({ dirPath: currentWorkspace, branchName: selected });
-        if (!res.success) alert(`Failed to checkout branch: ${res.error}`);
-        await updateGitStatus();
-        await renderGitModalContent();
-      }
-    });
-  }
+      });
+    }
 
-  const commitBtn = gitModalBody.querySelector('#git-commit-btn');
-  const commitInput = gitModalBody.querySelector('#git-commit-input');
-  if (commitBtn && commitInput) {
-    commitBtn.addEventListener('click', async () => {
-      const msg = commitInput.value.trim();
-      if (!msg) {
-        alert('Please enter a commit message.');
-        return;
-      }
-      commitBtn.disabled = true;
-      commitBtn.textContent = 'Committing...';
-      const res = await window.electronAPI.gitCommit({ dirPath: currentWorkspace, message: msg });
-      if (res.success) {
-        await updateGitStatus();
-        await renderGitModalContent();
-      } else {
-        alert(`Commit failed: ${res.error}`);
-        commitBtn.disabled = false;
-        commitBtn.textContent = 'Commit All Changes';
-      }
-    });
-  }
+    // Branch select change listener
+    const branchSelect = document.getElementById('git-branch-select');
+    if (branchSelect) {
+      branchSelect.addEventListener('change', async (e) => {
+        const selected = e.target.value;
+        if (selected === '__create_new__') {
+          const newName = await customPrompt('Enter new branch name:');
+          if (newName && newName.trim()) {
+            const res = await window.electronAPI.gitCreateBranch({ dirPath: currentWorkspace, branchName: newName.trim() });
+            if (!res.success) alert(`Failed to create branch: ${res.error}`);
+            await updateGitStatus();
+            await renderGitModalContent();
+          } else {
+            branchSelect.value = status.branch;
+          }
+        } else if (selected === '__merge_branch__') {
+          const otherBranches = branches.filter(b => !b.current).map(b => b.name);
+          if (otherBranches.length === 0) {
+            alert('No other branches found to merge.');
+            branchSelect.value = status.branch;
+            return;
+          }
+          const targetMerge = await customPrompt(`Enter branch name to merge into ${status.branch}:`);
+          if (targetMerge && targetMerge.trim()) {
+            const res = await window.electronAPI.gitMerge({ dirPath: currentWorkspace, branchName: targetMerge.trim() });
+            if (res.success) {
+              alert(`Merged ${targetMerge} successfully!`);
+            } else {
+              alert(`Merge failed: ${res.error}`);
+            }
+            await updateGitStatus();
+            await renderGitModalContent();
+          } else {
+            branchSelect.value = status.branch;
+          }
+        } else if (selected !== status.branch) {
+          const res = await window.electronAPI.gitCheckoutBranch({ dirPath: currentWorkspace, branchName: selected });
+          if (!res.success) alert(`Failed to checkout branch: ${res.error}`);
+          await updateGitStatus();
+          await renderGitModalContent();
+        }
+      });
+    }
 
-  // Attach Sync and Stash listeners
-  const fetchBtn = gitModalBody.querySelector('#git-fetch-btn');
-  if (fetchBtn) {
-    fetchBtn.addEventListener('click', async () => {
-      fetchBtn.disabled = true;
-      fetchBtn.textContent = 'Fetching...';
-      const res = await window.electronAPI.gitFetch(currentWorkspace);
-      fetchBtn.disabled = false;
-      fetchBtn.textContent = 'Fetch';
-      if (res.success) {
-        alert('Fetch completed!');
-        await updateGitStatus();
-        await renderGitModalContent();
-      } else {
-        alert(`Fetch failed: ${res.error}`);
-      }
-    });
-  }
+    // Sync button listeners
+    const fetchBtn = document.getElementById('git-sync-fetch-btn');
+    if (fetchBtn) {
+      fetchBtn.addEventListener('click', async () => {
+        fetchBtn.disabled = true;
+        fetchBtn.textContent = 'Fetching...';
+        const res = await window.electronAPI.gitFetch(currentWorkspace);
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = 'Fetch';
+        if (res.success) {
+          alert('Fetch completed!');
+          await updateGitStatus();
+          await renderGitModalContent();
+        } else {
+          alert(`Fetch failed: ${res.error}`);
+        }
+      });
+    }
 
-  const pullBtn = gitModalBody.querySelector('#git-pull-btn');
-  if (pullBtn) {
-    pullBtn.addEventListener('click', async () => {
-      pullBtn.disabled = true;
-      pullBtn.textContent = 'Pulling...';
-      const res = await window.electronAPI.gitPull(currentWorkspace);
-      pullBtn.disabled = false;
-      pullBtn.textContent = 'Pull';
-      if (res.success) {
-        alert('Pull completed!');
-        await updateGitStatus();
-        await renderGitModalContent();
-      } else {
-        alert(`Pull failed: ${res.error}`);
-      }
-    });
-  }
+    const pullBtn = document.getElementById('git-sync-pull-btn');
+    if (pullBtn) {
+      pullBtn.addEventListener('click', async () => {
+        pullBtn.disabled = true;
+        pullBtn.textContent = 'Pulling...';
+        const res = await window.electronAPI.gitPull(currentWorkspace);
+        pullBtn.disabled = false;
+        pullBtn.textContent = 'Pull';
+        if (res.success) {
+          alert('Pull completed!');
+          await updateGitStatus();
+          await renderGitModalContent();
+        } else {
+          alert(`Pull failed: ${res.error}`);
+        }
+      });
+    }
 
-  const pushBtn = gitModalBody.querySelector('#git-push-btn');
-  if (pushBtn) {
-    pushBtn.addEventListener('click', async () => {
-      pushBtn.disabled = true;
-      pushBtn.textContent = 'Pushing...';
-      const res = await window.electronAPI.gitPush(currentWorkspace);
-      pushBtn.disabled = false;
-      pushBtn.textContent = 'Push';
-      if (res.success) {
-        alert('Push completed!');
-        await updateGitStatus();
-        await renderGitModalContent();
-      } else {
-        alert(`Push failed: ${res.error}`);
-      }
-    });
-  }
+    const pushBtn = document.getElementById('git-sync-push-btn');
+    if (pushBtn) {
+      pushBtn.addEventListener('click', async () => {
+        pushBtn.disabled = true;
+        pushBtn.textContent = 'Pushing...';
+        const res = await window.electronAPI.gitPush(currentWorkspace);
+        pushBtn.disabled = false;
+        pushBtn.textContent = 'Push';
+        if (res.success) {
+          alert('Push completed!');
+          await updateGitStatus();
+          await renderGitModalContent();
+        } else {
+          alert(`Push failed: ${res.error}`);
+        }
+      });
+    }
 
-  const stashBtn = gitModalBody.querySelector('#git-stash-btn');
-  if (stashBtn) {
-    stashBtn.addEventListener('click', async () => {
-      const stashMsg = prompt('Optional stash description:');
-      const res = await window.electronAPI.gitStash({ dirPath: currentWorkspace, message: stashMsg ? stashMsg.trim() : '' });
-      if (res.success) {
-        await updateGitStatus();
-        await renderGitModalContent();
-      } else {
-        alert(`Stash failed: ${res.error}`);
-      }
-    });
-  }
+  } else if (activeGitTab === 'history') {
+    const res = await window.electronAPI.gitGetHistory(currentWorkspace);
+    if (res && res.success && res.commits.length > 0) {
+      const itemsHtml = res.commits.map(c => `
+        <div class="git-history-item">
+          <div>
+            <div style="font-weight: 600; color: var(--text-normal); font-size: 13px; margin-bottom: 2px;">${c.message}</div>
+            <div style="color: var(--text-muted); font-size: 11px;">${c.author} • ${c.date}</div>
+          </div>
+          <span style="font-family: monospace; background: var(--bg-darkest); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-color); color: var(--accent-purple);">${c.hash}</span>
+        </div>
+      `).join('');
 
-  const popBtn = gitModalBody.querySelector('#git-pop-btn');
-  if (popBtn) {
-    popBtn.addEventListener('click', async () => {
-      const res = await window.electronAPI.gitStashPop(currentWorkspace);
-      if (res.success) {
-        await updateGitStatus();
-        await renderGitModalContent();
-      } else {
-        alert(`Pop stash failed: ${res.error}`);
-      }
-    });
-  }
+      gitModalBody.innerHTML = `
+        <div class="git-history-view">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Recent Commits (HEAD)</div>
+          ${itemsHtml}
+        </div>
+      `;
+    } else {
+      gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">No commit history found.</div>';
+    }
 
-  const refreshBtn = gitModalBody.querySelector('#refresh-git-btn');
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', async () => {
-      await renderGitModalContent();
-      await updateGitStatus();
-    });
-  }
+  } else if (activeGitTab === 'graph') {
+    const res = await window.electronAPI.gitGetGraph(currentWorkspace);
+    if (res && res.success && res.graph) {
+      gitModalBody.innerHTML = `
+        <div style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Branch Visualization Graph</div>
+          <div class="git-graph-view">${res.graph}</div>
+        </div>
+      `;
+    } else {
+      gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">Failed to generate branch graph.</div>';
+    }
 
-  const items = gitModalBody.querySelectorAll('.git-file-item');
-  items.forEach(item => {
-    item.addEventListener('click', () => {
-      const fullPath = item.getAttribute('data-path');
-      const relPath = item.getAttribute('data-rel');
-      if (fullPath) {
-        openFile(fullPath, relPath.split('/').pop());
-        if (gitModal) gitModal.classList.add('hidden');
+  } else if (activeGitTab === 'blame') {
+    const activePath = activeEditorPane === 'left' ? currentFilePath : currentFilePathRight;
+    if (!activePath) {
+      gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">No active file open in editor to run blame.</div>';
+      return;
+    }
+
+    const relPath = path.relative ? path.relative(currentWorkspace, activePath) : activePath.replace(currentWorkspace + '/', '');
+    const res = await window.electronAPI.gitGetBlame({ dirPath: currentWorkspace, filePath: relPath });
+    if (res && res.success && res.blame) {
+      const lines = res.blame.split('\n');
+      let blameLinesHtml = '';
+      
+      // Parse git blame --porcelain output
+      let currentCommit = {};
+      const commits = {};
+      const fileLines = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+
+        if (line.match(/^[0-9a-f]{40}/)) {
+          const parts = line.split(' ');
+          const hash = parts[0].substring(0, 8);
+          currentCommit = { hash };
+          if (parts.length > 3) {
+            fileLines.push({ hash, text: '' });
+          }
+        } else if (line.startsWith('author ')) {
+          currentCommit.author = line.substring(7);
+        } else if (line.startsWith('author-time ')) {
+          const time = parseInt(line.substring(12)) * 1000;
+          currentCommit.date = new Date(time).toLocaleDateString();
+        } else if (line.startsWith('summary ')) {
+          currentCommit.summary = line.substring(8);
+          commits[currentCommit.hash] = { ...currentCommit };
+        } else if (line.startsWith('\t')) {
+          if (fileLines.length > 0) {
+            fileLines[fileLines.length - 1].text = line.substring(1);
+          }
+        }
       }
-    });
-  });
+
+      const formattedLines = fileLines.map((fl, idx) => {
+        const c = commits[fl.hash] || { author: 'Unknown', date: 'N/A', summary: 'No commit info' };
+        return `
+          <div class="git-blame-line">
+            <div class="git-blame-meta">[${fl.hash}] ${c.author} (${c.date}) - ${c.summary}</div>
+            <div style="color: var(--text-muted); width: 30px; text-align: right; user-select: none;">${idx + 1}</div>
+            <div class="git-blame-content">${fl.text}</div>
+          </div>
+        `;
+      }).join('');
+
+      gitModalBody.innerHTML = `
+        <div class="git-blame-view">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Blame Annotation: ${relPath}</div>
+          <div class="git-blame-list">
+            ${formattedLines}
+          </div>
+        </div>
+      `;
+    } else {
+      gitModalBody.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">Blame info not available for this file (is it committed?).</div>`;
+    }
+
+  } else if (activeGitTab === 'conflicts') {
+    const res = await window.electronAPI.gitGetConflicts(currentWorkspace);
+    if (res && res.success && res.conflicts.length > 0) {
+      const listHtml = res.conflicts.map(file => `
+        <div class="git-conflict-item">
+          <div>
+            <div style="font-weight: 600; color: #e06c75; font-size: 13px; margin-bottom: 2px;">⚡ ${file}</div>
+            <div style="color: var(--text-muted); font-size: 11px;">Contains unresolved conflict markers</div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn resolve-ours" data-path="${file}" style="background: var(--bg-darkest); color: var(--text-normal); font-size: 11px; padding: 4px 8px; border: 1px solid var(--border-color);">Keep Ours</button>
+            <button class="btn resolve-theirs" data-path="${file}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 8px; border: none;">Keep Theirs</button>
+          </div>
+        </div>
+      `).join('');
+
+      gitModalBody.innerHTML = `
+        <div class="git-conflicts-view">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Merge Conflicts Detected (${res.conflicts.length})</div>
+          ${listHtml}
+        </div>
+      `;
+
+      // Attach conflict resolve handlers
+      gitModalBody.querySelectorAll('.resolve-ours').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const pathVal = btn.getAttribute('data-path');
+          await window.electronAPI.gitResolveConflict({ dirPath: currentWorkspace, filePath: pathVal, choice: 'ours' });
+          await updateGitStatus();
+          await renderGitModalContent();
+        });
+      });
+
+      gitModalBody.querySelectorAll('.resolve-theirs').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const pathVal = btn.getAttribute('data-path');
+          await window.electronAPI.gitResolveConflict({ dirPath: currentWorkspace, filePath: pathVal, choice: 'theirs' });
+          await updateGitStatus();
+          await renderGitModalContent();
+        });
+      });
+
+    } else {
+      gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0;">🎉 No merge conflicts detected in your working directory.</div>';
+    }
+
+  } else if (activeGitTab === 'sync') {
+    gitModalBody.innerHTML = `
+      <div style="display: flex; flex-direction: column; gap: 15px; flex: 1;">
+        <div>
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Remote Actions</div>
+          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <button id="git-fetch-btn" class="btn" style="flex: 1; padding: 8px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Fetch Remotes</button>
+            <button id="git-pull-btn" class="btn" style="flex: 1; padding: 8px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Pull Changes</button>
+            <button id="git-push-btn" class="btn" style="flex: 1; padding: 8px; font-size: 12px; background: var(--accent-blue); border: none; color: #fff; cursor: pointer; font-weight: 600;">Push to Origin</button>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button id="git-stash-btn" class="btn" style="flex: 1; padding: 8px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Stash Changes</button>
+            <button id="git-pop-btn" class="btn" style="flex: 1; padding: 8px; font-size: 12px; background: var(--bg-darkest); border: 1px solid var(--border-color); color: var(--text-normal); cursor: pointer;">Pop Stash</button>
+          </div>
+        </div>
+
+        <div style="background: var(--bg-darkest); padding: 12px; border-radius: 6px; border: 1px solid var(--border-color); font-size: 12px;">
+          <div style="font-weight: 600; color: var(--text-normal); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+            <span>ℹ️</span> Pull Request / Code Review Checklist
+          </div>
+          <div style="color: var(--text-muted); line-height: 1.5; display: flex; flex-direction: column; gap: 6px;">
+            <label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" checked> Build compiles successfully locally</label>
+            <label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox"> Unit tests verified and passing</label>
+            <label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox"> Clean code review modifications done</label>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Attach Remote Actions listeners
+    const fetchBtn = document.getElementById('git-fetch-btn');
+    if (fetchBtn) {
+      fetchBtn.addEventListener('click', async () => {
+        fetchBtn.disabled = true;
+        fetchBtn.textContent = 'Fetching...';
+        const res = await window.electronAPI.gitFetch(currentWorkspace);
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = 'Fetch Remotes';
+        if (res.success) {
+          alert('Fetch completed successfully!');
+          await updateGitStatus();
+        } else {
+          alert(`Fetch failed: ${res.error}`);
+        }
+      });
+    }
+
+    const pullBtn = document.getElementById('git-pull-btn');
+    if (pullBtn) {
+      pullBtn.addEventListener('click', async () => {
+        pullBtn.disabled = true;
+        pullBtn.textContent = 'Pulling...';
+        const res = await window.electronAPI.gitPull(currentWorkspace);
+        pullBtn.disabled = false;
+        pullBtn.textContent = 'Pull Changes';
+        if (res.success) {
+          alert('Pull completed successfully!');
+          await updateGitStatus();
+        } else {
+          alert(`Pull failed: ${res.error}`);
+        }
+      });
+    }
+
+    const pushBtn = document.getElementById('git-push-btn');
+    if (pushBtn) {
+      pushBtn.addEventListener('click', async () => {
+        pushBtn.disabled = true;
+        pushBtn.textContent = 'Pushing...';
+        const res = await window.electronAPI.gitPush(currentWorkspace);
+        pushBtn.disabled = false;
+        pushBtn.textContent = 'Push to Origin';
+        if (res.success) {
+          alert('Push completed successfully!');
+          await updateGitStatus();
+        } else {
+          alert(`Push failed: ${res.error}`);
+        }
+      });
+    }
+
+    const stashBtn = document.getElementById('git-stash-btn');
+    if (stashBtn) {
+      stashBtn.addEventListener('click', async () => {
+        const stashMsg = prompt('Optional stash description:');
+        const res = await window.electronAPI.gitStash({ dirPath: currentWorkspace, message: stashMsg ? stashMsg.trim() : '' });
+        if (res.success) {
+          await updateGitStatus();
+          await renderGitModalContent();
+        } else {
+          alert(`Stash failed: ${res.error}`);
+        }
+      });
+    }
+
+    const popBtn = document.getElementById('git-pop-btn');
+    if (popBtn) {
+      popBtn.addEventListener('click', async () => {
+        const res = await window.electronAPI.gitStashPop(currentWorkspace);
+        if (res.success) {
+          await updateGitStatus();
+          await renderGitModalContent();
+        } else {
+          alert(`Pop stash failed: ${res.error}`);
+        }
+      });
+    }
+  }
 }
 
 if (gitBtn) {
   gitBtn.addEventListener('click', async () => {
     if (gitModal) gitModal.classList.remove('hidden');
     await renderGitModalContent();
+    if (currentWorkspace) {
+      window.electronAPI.gitFetch(currentWorkspace).then(async (res) => {
+        if (res && res.success) {
+          await renderGitModalContent();
+        }
+      });
+    }
   });
 }
 
