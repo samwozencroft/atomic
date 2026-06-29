@@ -7,9 +7,40 @@
 A lightweight, modern text editor built on Electron 30 and Node 20. Atomic utilizes the Monaco Editor engine (the same technology powering VS Code) to deliver an incredibly fast and robust coding experience without the heavy legacy baggage.
 
 ## Features
-- **Lightning Fast**: Built on modern web technologies.
-- **Auto-Updating**: Seamlessly patches itself using GitHub Releases.
-- **One Dark Theme**: Beautiful, native-feeling UI with recursive file trees and custom context menus.
+- ** Lightning Fast**: Powered by the Monaco Editor engine (the same technology inside VS Code) for robust, high-performance code editing.
+- ** Integrated TTY Terminal**: Fully interactive native terminal panel at the bottom supporting shell selection, tab autocompletion, TTY curses editors (`nano`, `vim`), and automated styling.
+- ** Workspace Search**: Global workspace search to find files and query text within files instantly.
+- ** Unified Git Panel**: GitHub Desktop-style Changes list with checkbox commit selections, interactive Monaco side-by-side Diff Viewer, branch creation/checkout/merges, blame, history logs, and remote push/pull counters.
+- ** Theme Customization**: Pre-built themes (One Dark, Light, etc.) with custom live editing and style sheet overrides.
+- ** Auto-Updating**: Seamlessly self-updates via GitHub Release automation.
+
+---
+
+## Showcase
+
+### Advanced Git Panel & Monaco Diff Viewer
+Atomic features a comprehensive Git Dashboard built with checkbox selections for selective commits, visual logs, and a full side-by-side diff view.
+<p align="center">
+  <img width="843" alt="Git Panel and Diff Viewer" src="https://github.com/user-attachments/assets/bc515da7-3586-4724-af62-6523e5c4e8a4" />
+</p>
+
+### Integrated Native TTY Terminal
+An interactive terminal panel at the bottom, dynamically tracking workspace directories with shell customization (PowerShell/zsh/bash).
+<p align="center">
+  <img width="776" alt="Integrated Terminal" src="https://github.com/user-attachments/assets/7487bbb0-beab-4a88-bfb8-6faff92af3f4" />
+</p>
+
+### File Trees & Orchestration
+Recursive file tree system with context menus, directory creation, search filters, and layout orchestration.
+<p align="center">
+  <img width="246" alt="File Trees & Workspace Orchestration" src="https://github.com/user-attachments/assets/d523955f-2a2e-45ee-ab93-3f473b79936f" />
+</p>
+
+### Live Theme Customization & Explorer
+Instantly preview and customize editor themes or browse the marketplace without restarting.
+<p align="center">
+  <img width="490" alt="Theme Customization and Explorer" src="https://github.com/user-attachments/assets/ab9d21da-4981-4349-8002-4068edcf555c" />
+</p>
 
 ---
 
@@ -56,30 +87,6 @@ To run the application locally from source:
 
 ---
 
----
-Git Panel
-<img width="843" height="638" alt="image" src="https://github.com/user-attachments/assets/bc515da7-3586-4724-af62-6523e5c4e8a4" />
----
-
-terminal
-<img width="776" height="596" alt="image" src="https://github.com/user-attachments/assets/7487bbb0-beab-4a88-bfb8-6faff92af3f4" />
-
----
-
-file orchestration
-
-<img width="246" height="522" alt="image" src="https://github.com/user-attachments/assets/d523955f-2a2e-45ee-ab93-3f473b79936f" />
-
----
-
-theme customisation and explorer
-
-<img width="490" height="371" alt="image" src="https://github.com/user-attachments/assets/ab9d21da-4981-4349-8002-4068edcf555c" />
-
-
----
-
----
 ## Credits
 
 - **Logo & Icon Design**: Created by [@elisehindes](https://github.com/elisehindes).
