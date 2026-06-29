@@ -1019,6 +1019,24 @@ if (toggleWarnClose) {
 const toggleGit = document.getElementById('toggle-git');
 const showGitPref = localStorage.getItem('atomic_show_git') !== 'false';
 
+// Search Bar toggle preference
+const toggleSearch = document.getElementById('toggle-search');
+const showSearchPref = localStorage.getItem('atomic_show_search') !== 'false';
+const searchContainerPrefTarget = document.getElementById('search-container');
+
+if (toggleSearch) {
+  toggleSearch.checked = showSearchPref;
+  toggleSearch.addEventListener('change', (e) => {
+    localStorage.setItem('atomic_show_search', e.target.checked);
+    if (searchContainerPrefTarget) {
+      searchContainerPrefTarget.style.display = e.target.checked ? 'flex' : 'none';
+    }
+  });
+}
+if (searchContainerPrefTarget) {
+  searchContainerPrefTarget.style.display = showSearchPref ? 'flex' : 'none';
+}
+
 const reportIssueBtn = document.getElementById('report-issue-btn');
 if (reportIssueBtn) {
   reportIssueBtn.addEventListener('click', () => {
