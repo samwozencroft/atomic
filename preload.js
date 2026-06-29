@@ -40,5 +40,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitStash: (payload) => ipcRenderer.invoke('git:stash', payload),
   gitStashPop: (dirPath) => ipcRenderer.invoke('git:stashPop', dirPath),
   gitMerge: (payload) => ipcRenderer.invoke('git:merge', payload),
-  searchWorkspace: (payload) => ipcRenderer.invoke('fs:searchWorkspace', payload)
+  searchWorkspace: (payload) => ipcRenderer.invoke('fs:searchWorkspace', payload),
+  terminalGetShell: () => ipcRenderer.invoke('terminal:getShell'),
+  terminalExec: (payload) => ipcRenderer.invoke('terminal:exec', payload),
+  terminalWriteInput: (input) => ipcRenderer.invoke('terminal:writeInput', input),
+  terminalKill: () => ipcRenderer.invoke('terminal:kill'),
+  onTerminalData: (callback) => ipcRenderer.on('terminal:data', (_event, data) => callback(data)),
+  onTerminalExit: (callback) => ipcRenderer.on('terminal:exit', (_event, data) => callback(data)),
+  terminalSpawnPty: (payload) => ipcRenderer.invoke('terminal:spawnPty', payload),
+  terminalWritePty: (data) => ipcRenderer.invoke('terminal:writePty', data),
+  terminalResizePty: (payload) => ipcRenderer.invoke('terminal:resizePty', payload),
+  terminalKillPty: () => ipcRenderer.invoke('terminal:killPty'),
+  onTerminalPtyData: (callback) => ipcRenderer.on('terminal:ptyData', (_event, data) => callback(data)),
+  onTerminalPtyExit: (callback) => ipcRenderer.on('terminal:ptyExit', (_event, data) => callback(data))
 });

@@ -1487,6 +1487,7 @@ async function applyTheme(setting) {
       if (window.monaco) monaco.editor.setTheme('atom-one-dark');
     }
   }
+  if (typeof updateXtermTheme === 'function') updateXtermTheme();
 }
 
 // Initial theme application
@@ -1986,3 +1987,213 @@ async function triggerSearch(query) {
     });
   });
 }
+
+// =============================================================================
+// Bottom Terminal Panel Logic
+// =============================================================================
+const toggleTerminalBtn = document.getElementById('toggle-terminal-btn');
+const closeTerminalBtn = document.getElementById('close-terminal-btn');
+const clearTerminalBtn = document.getElementById('clear-terminal-btn');
+const killTerminalBtn = document.getElementById('kill-terminal-btn');
+const terminalPanel = document.getElementById('terminal-panel');
+const terminalResizer = document.getElementById('terminal-resizer');
+const terminalShellName = document.getElementById('terminal-shell-name');
+const terminalOutput = document.getElementById('terminal-output');
+const terminalInput = document.getElementById('terminal-input');
+const terminalPromptPath = document.getElementById('terminal-prompt-path');
+
+let isTerminalOpen = false;
+let terminalCwd = '';
+let commandHistory = [];
+let historyIndex = -1;
+let isCommandRunning = false;
+
+// Get Shell info on startup
+if (window.electronAPI && window.electronAPI.terminalGetShell) {
+  window.electronAPI.terminalGetShell().then(info => {
+    if (info && info.name) {
+      terminalShellName.textContent = info.name;
+    }
+  }).catch(() => {});
+}
+
+// REAL PTY TERMINAL INTEGRATION (Xterm.js + node-pty)
+let xtermInstance = null;
+let xtermFitAddon = null;
+let isPtySpawned = false;
+
+function updateXtermTheme() {
+  if (!xtermInstance) return;
+  const computed = getComputedStyle(document.body);
+  const bg = computed.getPropertyValue('--bg-darkest').trim() || '#181a1f';
+  const fg = computed.getPropertyValue('--text-normal').trim() || '#abb2bf';
+  const cursor = computed.getPropertyValue('--accent-blue').trim() || '#61afef';
+
+  const container = document.getElementById('terminal-container');
+  const panel = document.getElementById('terminal-panel');
+  if (container) container.style.backgroundColor = bg;
+  if (panel) panel.style.backgroundColor = bg;
+
+  xtermInstance.options.theme = {
+    background: bg,
+    foreground: fg,
+    cursor: cursor,
+    selectionBackground: 'rgba(97, 175, 239, 0.3)'
+  };
+}
+
+function initXterm() {
+  if (xtermInstance) return;
+  const TerminalConstructor = window.Terminal || (typeof Terminal !== 'undefined' ? Terminal : null);
+  const FitAddonConstructor = (window.FitAddon && window.FitAddon.FitAddon) || (typeof FitAddon !== 'undefined' && FitAddon.FitAddon ? FitAddon.FitAddon : null);
+
+  if (!TerminalConstructor) return;
+
+  xtermInstance = new TerminalConstructor({
+    cursorBlink: true,
+    theme: {
+      background: '#181a1f',
+      foreground: '#abb2bf',
+      cursor: '#61afef',
+      selectionBackground: 'rgba(97, 175, 239, 0.3)'
+    },
+    fontFamily: 'Consolas, "Courier New", monospace',
+    fontSize: 13,
+    lineHeight: 1.2
+  });
+  updateXtermTheme();
+
+  if (FitAddonConstructor) {
+    xtermFitAddon = new FitAddonConstructor();
+    xtermInstance.loadAddon(xtermFitAddon);
+  }
+
+  const container = document.getElementById('terminal-container');
+  if (container) {
+    xtermInstance.open(container);
+    if (xtermFitAddon) xtermFitAddon.fit();
+  }
+
+  xtermInstance.onData(data => {
+    if (window.electronAPI && window.electronAPI.terminalWritePty) {
+      window.electronAPI.terminalWritePty(data);
+    }
+  });
+
+  if (window.electronAPI) {
+    if (window.electronAPI.onTerminalPtyData) {
+      window.electronAPI.onTerminalPtyData(data => {
+        if (xtermInstance) xtermInstance.write(data);
+      });
+    }
+
+    if (window.electronAPI.onTerminalPtyExit) {
+      window.electronAPI.onTerminalPtyExit(() => {
+        if (xtermInstance) xtermInstance.write('\r\n\x1b[33m[Process exited]\x1b[0m\r\n');
+        isPtySpawned = false;
+      });
+    }
+  }
+}
+
+function toggleTerminal(show) {
+  if (show === undefined) show = !isTerminalOpen;
+  isTerminalOpen = show;
+  if (show) {
+    terminalPanel.classList.remove('hidden');
+    terminalResizer.classList.remove('hidden');
+    initXterm();
+    if (!isPtySpawned && window.electronAPI && window.electronAPI.terminalSpawnPty) {
+      const cols = xtermInstance ? xtermInstance.cols : 80;
+      const rows = xtermInstance ? xtermInstance.rows : 24;
+      const targetCwd = (typeof currentFolderPath !== 'undefined' && currentFolderPath) || '';
+      window.electronAPI.terminalSpawnPty({ cols, rows, cwd: targetCwd });
+      isPtySpawned = true;
+    }
+    setTimeout(() => {
+      if (xtermFitAddon) xtermFitAddon.fit();
+      if (xtermInstance) {
+        xtermInstance.focus();
+        if (window.electronAPI && window.electronAPI.terminalResizePty) {
+          window.electronAPI.terminalResizePty({ cols: xtermInstance.cols, rows: xtermInstance.rows });
+        }
+      }
+      if (editor) editor.layout();
+      if (editorRight) editorRight.layout();
+    }, 60);
+  } else {
+    terminalPanel.classList.add('hidden');
+    terminalResizer.classList.add('hidden');
+    setTimeout(() => {
+      if (editor) editor.layout();
+      if (editorRight) editorRight.layout();
+    }, 60);
+  }
+}
+
+if (toggleTerminalBtn) {
+  toggleTerminalBtn.addEventListener('click', () => toggleTerminal());
+}
+if (closeTerminalBtn) {
+  closeTerminalBtn.addEventListener('click', () => toggleTerminal(false));
+}
+if (clearTerminalBtn) {
+  clearTerminalBtn.addEventListener('click', () => {
+    if (xtermInstance) xtermInstance.clear();
+  });
+}
+
+// Terminal Resizer Logic
+if (terminalResizer && terminalPanel) {
+  let isResizingY = false;
+  let startY = 0;
+  let startHeight = 0;
+
+  terminalResizer.addEventListener('mousedown', (e) => {
+    isResizingY = true;
+    startY = e.clientY;
+    startHeight = terminalPanel.offsetHeight;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizingY) return;
+    const dy = startY - e.clientY;
+    const newHeight = Math.max(100, Math.min(window.innerHeight * 0.8, startHeight + dy));
+    terminalPanel.style.height = `${newHeight}px`;
+    if (xtermFitAddon) {
+      xtermFitAddon.fit();
+      if (xtermInstance && window.electronAPI && window.electronAPI.terminalResizePty) {
+        window.electronAPI.terminalResizePty({ cols: xtermInstance.cols, rows: xtermInstance.rows });
+      }
+    }
+    if (editor) editor.layout();
+    if (editorRight) editorRight.layout();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isResizingY) {
+      isResizingY = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      if (xtermFitAddon) {
+        xtermFitAddon.fit();
+        if (xtermInstance && window.electronAPI && window.electronAPI.terminalResizePty) {
+          window.electronAPI.terminalResizePty({ cols: xtermInstance.cols, rows: xtermInstance.rows });
+        }
+      }
+      if (editor) editor.layout();
+      if (editorRight) editorRight.layout();
+    }
+  });
+}
+
+window.addEventListener('resize', () => {
+  if (isTerminalOpen && xtermFitAddon) {
+    xtermFitAddon.fit();
+    if (xtermInstance && window.electronAPI && window.electronAPI.terminalResizePty) {
+      window.electronAPI.terminalResizePty({ cols: xtermInstance.cols, rows: xtermInstance.rows });
+    }
+  }
+});

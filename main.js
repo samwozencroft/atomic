@@ -2,7 +2,8 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } = require('elec
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
+const pty = require('node-pty');
 const util = require('node:util');
 const execFileAsync = util.promisify(execFile);
 
@@ -316,11 +317,12 @@ ipcMain.handle('dialog:openFile', async (event) => {
 
 ipcMain.handle('fs:readDir', async (event, dirPath) => {
   try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    const targetDir = (!dirPath || dirPath === '.') ? process.cwd() : dirPath;
+    const entries = await fs.readdir(targetDir, { withFileTypes: true });
     return entries.map(entry => ({
       name: entry.name,
       isDirectory: entry.isDirectory(),
-      path: path.join(dirPath, entry.name)
+      path: path.join(targetDir, entry.name)
     })).sort((a, b) => {
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
@@ -697,6 +699,189 @@ ipcMain.handle('fs:searchWorkspace', async (event, { dirPath, query }) => {
   await walk(dirPath);
   return results;
 });
+
+const activeTerminalProcesses = new Map();
+
+ipcMain.handle('terminal:getShell', () => {
+  if (process.platform === 'win32') return { name: 'PowerShell', platform: 'win32' };
+  if (process.platform === 'darwin') {
+    const sh = process.env.SHELL ? path.basename(process.env.SHELL) : 'zsh';
+    return { name: `Terminal (${sh})`, platform: 'darwin' };
+  }
+  const sh = process.env.SHELL ? path.basename(process.env.SHELL) : 'bash';
+  return { name: `Terminal (${sh})`, platform: 'linux' };
+});
+
+ipcMain.handle('terminal:exec', async (event, { command, cwd }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+
+  if (activeTerminalProcesses.has(winId)) {
+    try { activeTerminalProcesses.get(winId).kill('SIGINT'); } catch(e){}
+  }
+
+  const targetCwd = cwd || process.cwd();
+  return new Promise((resolve) => {
+    let shell, args;
+    if (process.platform === 'win32') {
+      shell = 'powershell.exe';
+      args = ['-NoProfile', '-Command', command];
+    } else {
+      shell = process.env.SHELL || '/bin/sh';
+      args = ['-c', command];
+    }
+
+    const customEnv = { ...process.env, TERM: 'xterm-256color', COLUMNS: '120', LINES: '30' };
+    const child = spawn(shell, args, { cwd: targetCwd, env: customEnv });
+    activeTerminalProcesses.set(winId, child);
+
+    child.stdout.on('data', (data) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('terminal:data', { type: 'stdout', data: data.toString() });
+      }
+    });
+
+    child.stderr.on('data', (data) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('terminal:data', { type: 'stderr', data: data.toString() });
+      }
+    });
+
+    child.on('error', (err) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('terminal:data', { type: 'stderr', data: err.message + '\n' });
+      }
+      activeTerminalProcesses.delete(winId);
+      resolve({ exitCode: 1 });
+    });
+
+    child.on('close', (code) => {
+      activeTerminalProcesses.delete(winId);
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('terminal:exit', { exitCode: code });
+      }
+      resolve({ exitCode: code });
+    });
+  });
+});
+
+ipcMain.handle('terminal:writeInput', (event, input) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+  const child = activeTerminalProcesses.get(winId);
+  if (child && child.stdin && !child.killed) {
+    try {
+      child.stdin.write(input);
+      return true;
+    } catch(e){}
+  }
+  return false;
+});
+
+ipcMain.handle('terminal:kill', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+  const child = activeTerminalProcesses.get(winId);
+  if (child && !child.killed) {
+    try {
+      child.kill('SIGINT');
+      setTimeout(() => {
+        if (activeTerminalProcesses.has(winId)) {
+          try { child.kill('SIGKILL'); } catch(e){}
+        }
+      }, 400);
+    } catch(e){}
+    activeTerminalProcesses.delete(winId);
+    return true;
+  }
+  return false;
+});
+
+const activePtySessions = new Map();
+
+ipcMain.handle('terminal:spawnPty', (event, { cols, rows, cwd }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+
+  if (activePtySessions.has(winId)) {
+    try { activePtySessions.get(winId).kill(); } catch(e){}
+    activePtySessions.delete(winId);
+  }
+
+  const shell = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/zsh');
+  const targetCwd = cwd || process.cwd();
+
+  try {
+    if (process.platform === 'darwin' || process.platform === 'linux') {
+      try {
+        const fsSync = require('node:fs');
+        const helperPath = path.join(__dirname, 'node_modules', 'node-pty', 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
+        if (fsSync.existsSync(helperPath)) {
+          fsSync.chmodSync(helperPath, 0o755);
+        }
+      } catch (e) {}
+    }
+
+    const ptyProcess = pty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: cols || 80,
+      rows: rows || 24,
+      cwd: targetCwd,
+      env: process.env
+    });
+
+    activePtySessions.set(winId, ptyProcess);
+
+    ptyProcess.onData((data) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('terminal:ptyData', data);
+      }
+    });
+
+    ptyProcess.onExit(({ exitCode }) => {
+      activePtySessions.delete(winId);
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('terminal:ptyExit', exitCode);
+      }
+    });
+
+    return true;
+  } catch (err) {
+    console.error('Failed to spawn PTY:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('terminal:writePty', (event, data) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+  const ptyProcess = activePtySessions.get(winId);
+  if (ptyProcess) {
+    ptyProcess.write(data);
+  }
+});
+
+ipcMain.handle('terminal:resizePty', (event, { cols, rows }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+  const ptyProcess = activePtySessions.get(winId);
+  if (ptyProcess && cols > 0 && rows > 0) {
+    try {
+      ptyProcess.resize(cols, rows);
+    } catch(e){}
+  }
+});
+
+ipcMain.handle('terminal:killPty', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+  const ptyProcess = activePtySessions.get(winId);
+  if (ptyProcess) {
+    try { ptyProcess.kill(); } catch(e){}
+    activePtySessions.delete(winId);
+  }
+});
+
 
 
 

@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <title>Atomic</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+    <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <style id="custom-theme-style"></style>
 </head>
 <body>
@@ -29,6 +32,12 @@
                 </div>
             </div>
             <div class="topbar-actions">
+                <button id="toggle-terminal-btn" class="icon-btn" title="Toggle Terminal">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="3" y1="15" x2="21" y2="15"></line>
+                    </svg>
+                </button>
                 <button id="toggle-sidebar-btn" class="icon-btn" title="Toggle Sidebar">
                     <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -36,25 +45,54 @@
                     </svg>
                 </button>
             </div>
-            <div id="editor-wrapper">
-                <div id="editor-column-left" class="editor-column">
-                    <div id="tabs-left" class="tabs-container"></div>
-                    <div id="editor-container"></div>
+            <div class="content-body">
+                <div id="editor-wrapper">
+                    <div id="editor-column-left" class="editor-column">
+                        <div id="tabs-left" class="tabs-container"></div>
+                        <div id="editor-container"></div>
+                    </div>
+                    <div id="editor-column-right" class="editor-column" style="display: none;">
+                        <div id="tabs-right" class="tabs-container"></div>
+                        <div id="editor-container-right"></div>
+                    </div>
+                    <div id="split-drop-zone"></div>
                 </div>
-                <div id="editor-column-right" class="editor-column" style="display: none;">
-                    <div id="tabs-right" class="tabs-container"></div>
-                    <div id="editor-container-right"></div>
+                <div id="welcome-screen" class="welcome-screen active">
+                    <img src="assets/icon.png" alt="Atomic Logo" class="welcome-logo">
+                    <h1>Atomic</h1>
+                    <p>A lightweight, modern text editor built on Electron 30 and Node 20.</p>
+                    <div class="welcome-actions">
+                        <button class="btn" onclick="document.getElementById('open-folder-btn').click()">Open a Folder</button>
+                    </div>
+                    <div class="welcome-version" id="app-version-display"></div>
                 </div>
-                <div id="split-drop-zone"></div>
             </div>
-            <div id="welcome-screen" class="welcome-screen active">
-                <img src="assets/icon.png" alt="Atomic Logo" class="welcome-logo">
-                <h1>Atomic</h1>
-                <p>A lightweight, modern text editor built on Electron 30 and Node 20.</p>
-                <div class="welcome-actions">
-                    <button class="btn" onclick="document.getElementById('open-folder-btn').click()">Open a Folder</button>
+            <div id="terminal-resizer" class="resizer-y hidden"></div>
+            <div id="terminal-panel" class="terminal-panel hidden">
+                <div class="terminal-header">
+                    <div class="terminal-title">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="4 17 10 11 4 5"></polyline>
+                            <line x1="12" y1="19" x2="20" y2="19"></line>
+                        </svg>
+                        <span id="terminal-shell-name">Terminal</span>
+                    </div>
+                    <div class="terminal-actions">
+                        <button id="kill-terminal-btn" class="icon-btn-sm hidden" title="Interrupt Process (Ctrl+C)">
+                            <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                                <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                            </svg>
+                        </button>
+                        <button id="clear-terminal-btn" class="icon-btn-sm" title="Clear Terminal">
+                            <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                        <button id="close-terminal-btn" class="icon-btn-sm" title="Close Terminal">&times;</button>
+                    </div>
                 </div>
-                <div class="welcome-version" id="app-version-display"></div>
+                <div id="terminal-container" style="flex: 1; width: 100%; height: 100%; overflow: hidden; background: var(--bg-darkest); padding: 4px;"></div>
             </div>
         </div>
     </div>
