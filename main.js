@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } = require('elec
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { execFile } = require('node:child_process');
+const util = require('node:util');
+const execFileAsync = util.promisify(execFile);
 
 
 let mainWindow; // Keep reference to first window for legacy checks if any, though we should try to avoid it
@@ -433,3 +436,136 @@ ipcMain.handle('dialog:showSaveDialog', async (event, defaultPath) => {
   });
   return result.canceled ? null : result.filePath;
 });
+
+ipcMain.handle('git:getStatus', async (event, dirPath) => {
+  if (!dirPath) return { isRepo: false, error: 'No workspace folder opened' };
+  try {
+    await execFileAsync('git', ['--version']);
+  } catch (err) {
+    return { isRepo: false, gitInstalled: false, error: 'Git is not installed or not in PATH' };
+  }
+
+  try {
+    const { stdout: isRepoOut } = await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: dirPath });
+    if (isRepoOut.trim() !== 'true') {
+      return { isRepo: false, gitInstalled: true };
+    }
+
+    let branch = 'HEAD';
+    try {
+      const { stdout: branchOut } = await execFileAsync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: dirPath });
+      branch = branchOut.trim();
+    } catch (e) {
+      try {
+        const { stdout: revOut } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd: dirPath });
+        branch = revOut.trim() || 'DETACHED';
+      } catch (e2) {
+        branch = 'main';
+      }
+    }
+
+    const { stdout: statusOut } = await execFileAsync('git', ['status', '--porcelain=v1', '-u'], { cwd: dirPath });
+    const lines = statusOut.split('\n').filter(l => l.length > 0);
+    const files = lines.map(line => {
+      const x = line[0];
+      const y = line[1];
+      const filePath = line.substring(3).trim();
+      let status = 'modified';
+      if (x === '?' && y === '?') status = 'untracked';
+      else if (x === 'A' || y === 'A') status = 'added';
+      else if (x === 'D' || y === 'D') status = 'deleted';
+      else if (x === 'M' || y === 'M') status = 'modified';
+      else if (x === 'R' || y === 'R') status = 'renamed';
+
+      return {
+        path: filePath,
+        fullPath: path.join(dirPath, filePath),
+        status,
+        indexStatus: x,
+        workingTreeStatus: y
+      };
+    });
+
+    return {
+      isRepo: true,
+      gitInstalled: true,
+      branch,
+      files,
+      stats: {
+        total: files.length,
+        modified: files.filter(f => f.status === 'modified').length,
+        added: files.filter(f => f.status === 'added').length,
+        deleted: files.filter(f => f.status === 'deleted').length,
+        untracked: files.filter(f => f.status === 'untracked').length
+      }
+    };
+  } catch (err) {
+    return { isRepo: false, gitInstalled: true, error: err.message };
+  }
+});
+
+ipcMain.handle('git:stageFile', async (event, { dirPath, filePath }) => {
+  try {
+    await execFileAsync('git', ['add', filePath], { cwd: dirPath });
+    return true;
+  } catch (err) {
+    return false;
+  }
+});
+
+ipcMain.handle('git:unstageFile', async (event, { dirPath, filePath }) => {
+  try {
+    await execFileAsync('git', ['reset', 'HEAD', filePath], { cwd: dirPath });
+    return true;
+  } catch (err) {
+    return false;
+  }
+});
+
+ipcMain.handle('git:commit', async (event, { dirPath, message }) => {
+  if (!dirPath || !message) return { success: false, error: 'Missing parameter' };
+  try {
+    await execFileAsync('git', ['add', '-A'], { cwd: dirPath });
+    const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:getBranches', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No directory' };
+  try {
+    const { stdout } = await execFileAsync('git', ['branch', '--list'], { cwd: dirPath });
+    const lines = stdout.split('\n').filter(l => l.trim().length > 0);
+    const branches = lines.map(l => {
+      const current = l.startsWith('*');
+      const name = l.replace('*', '').trim();
+      return { name, current };
+    });
+    return { success: true, branches };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:checkoutBranch', async (event, { dirPath, branchName }) => {
+  if (!dirPath || !branchName) return { success: false, error: 'Missing parameter' };
+  try {
+    const { stdout } = await execFileAsync('git', ['checkout', branchName], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:createBranch', async (event, { dirPath, branchName }) => {
+  if (!dirPath || !branchName) return { success: false, error: 'Missing parameter' };
+  try {
+    const { stdout } = await execFileAsync('git', ['checkout', '-b', branchName], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+

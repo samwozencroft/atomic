@@ -26,5 +26,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resetCustomTheme: () => ipcRenderer.invoke('app:resetCustomTheme'),
   openInFinder: (filePath) => ipcRenderer.invoke('fs:openInFinder', filePath),
   copyFile: (filePath) => ipcRenderer.invoke('fs:copy', filePath),
-  showSaveDialog: (defaultPath) => ipcRenderer.invoke('dialog:showSaveDialog', defaultPath)
+  showSaveDialog: (defaultPath) => ipcRenderer.invoke('dialog:showSaveDialog', defaultPath),
+  gitGetStatus: (dirPath) => ipcRenderer.invoke('git:getStatus', dirPath),
+  gitStageFile: (payload) => ipcRenderer.invoke('git:stageFile', payload),
+  gitUnstageFile: (payload) => ipcRenderer.invoke('git:unstageFile', payload),
+  gitCommit: (payload) => ipcRenderer.invoke('git:commit', payload),
+  gitGetBranches: (dirPath) => ipcRenderer.invoke('git:getBranches', dirPath),
+  gitCheckoutBranch: (payload) => ipcRenderer.invoke('git:checkoutBranch', payload),
+  gitCreateBranch: (payload) => ipcRenderer.invoke('git:createBranch', payload)
 });

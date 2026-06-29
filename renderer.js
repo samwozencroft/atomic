@@ -261,9 +261,16 @@ document.getElementById('open-folder-btn').addEventListener('click', async () =>
 });
 
 async function loadDirectory(dirPath) {
+    currentWorkspace = dirPath;
     const treeContainer = document.getElementById('file-tree');
     treeContainer.innerHTML = ''; // Clear previous
     await renderTree(dirPath, treeContainer, 0);
+    if (typeof updateGitStatus === 'function') {
+        updateGitStatus();
+    }
+    if (typeof renderGitModalContent === 'function' && typeof gitModal !== 'undefined' && gitModal && !gitModal.classList.contains('hidden')) {
+        renderGitModalContent();
+    }
 }
 
 async function renderTree(path, container, indent) {
@@ -1014,6 +1021,229 @@ if (reportIssueBtn) {
     window.electronAPI.reportIssue();
   });
 }
+
+// Git Integration Logic
+const gitBtn = document.getElementById('git-btn');
+const gitStatusText = document.getElementById('git-status-text');
+const gitModal = document.getElementById('git-modal');
+const closeGitModalBtn = document.getElementById('close-git-modal');
+const refreshGitBtn = document.getElementById('refresh-git-btn');
+const gitModalBody = document.getElementById('git-modal-body');
+
+async function updateGitStatus() {
+  if (!currentWorkspace) {
+    if (gitStatusText) gitStatusText.textContent = 'Git (No Folder)';
+    return null;
+  }
+
+  const status = await window.electronAPI.gitGetStatus(currentWorkspace);
+  if (!status || !status.gitInstalled) {
+    if (gitStatusText) gitStatusText.textContent = 'Git (Unavailable)';
+    return status;
+  }
+
+  if (!status.isRepo) {
+    if (gitStatusText) gitStatusText.textContent = 'Git (No Repo)';
+    return status;
+  }
+
+  const total = status.stats.total;
+  if (gitStatusText) {
+    gitStatusText.textContent = `${status.branch}${total > 0 ? ' • ' + total : ''}`;
+  }
+  return status;
+}
+
+async function renderGitModalContent() {
+  if (!gitModalBody) return;
+  gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">Loading repository status...</div>';
+
+  if (!currentWorkspace) {
+    gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">No workspace folder is currently open.<br><br><button class="btn" id="git-modal-open-folder-btn">Open a Folder</button></div>';
+    const openBtn = gitModalBody.querySelector('#git-modal-open-folder-btn');
+    if (openBtn) {
+      openBtn.addEventListener('click', async () => {
+        const dirPath = await window.electronAPI.openDirectory();
+        if (dirPath) {
+          document.getElementById('welcome-screen').classList.remove('active');
+          document.getElementById('editor-container').style.display = 'block';
+          await loadDirectory(dirPath);
+        }
+      });
+    }
+    return;
+  }
+
+  const status = await window.electronAPI.gitGetStatus(currentWorkspace);
+
+  if (!status || !status.gitInstalled) {
+    gitModalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">Git CLI command was not found. Please make sure Git is installed and added to system PATH.</div>';
+    return;
+  }
+
+  if (!status.isRepo) {
+    gitModalBody.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">The current workspace folder is not a Git repository.<br><br><span style="font-size: 11px; font-family: monospace; opacity: 0.8;">${currentWorkspace}</span></div>`;
+    return;
+  }
+
+  // Get branches
+  const branchRes = await window.electronAPI.gitGetBranches(currentWorkspace);
+  const branches = (branchRes && branchRes.success && branchRes.branches) ? branchRes.branches : [{ name: status.branch, current: true }];
+
+  let branchOptions = branches.map(b => `<option value="${b.name}" ${b.current ? 'selected' : ''}>${b.name}</option>`).join('');
+  branchOptions += '<option value="__create_new__">+ Create New Branch...</option>';
+
+  let html = `
+    <div class="setting-item" style="margin-bottom: 15px;">
+      <span style="color: var(--text-muted);">Current Branch</span>
+      <select id="git-branch-select" style="background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer;">
+        ${branchOptions}
+      </select>
+    </div>
+    <div class="setting-item" style="margin-bottom: 15px;">
+      <span style="color: var(--text-muted);">Changed Files</span>
+      <span style="font-weight: 500; color: var(--text-normal);">${status.stats.total}</span>
+    </div>
+  `;
+
+  if (status.files.length === 0) {
+    html += '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0; border-top: 1px solid var(--border-color);">Working tree clean. No changes detected.</div>';
+  } else {
+    html += '<div style="border-top: 1px solid var(--border-color); padding-top: 15px;">';
+    html += '<div style="font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 10px;">Changed Files</div>';
+    html += '<div class="git-file-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow-y: auto;">';
+
+    status.files.forEach(file => {
+      let badgeLetter = 'M';
+      if (file.status === 'added') badgeLetter = 'A';
+      else if (file.status === 'deleted') badgeLetter = 'D';
+      else if (file.status === 'untracked') badgeLetter = 'U';
+
+      html += `
+        <div class="git-file-item" data-path="${file.fullPath}" data-rel="${file.path}">
+          <div class="git-file-info">
+            <span class="git-file-badge git-badge-${badgeLetter}">${badgeLetter}</span>
+            <span style="font-size: 13px; color: var(--text-normal); font-family: monospace;">${file.path}</span>
+          </div>
+        </div>
+      `;
+    });
+
+    html += '</div></div>';
+
+    // Commit section
+    html += `
+      <div style="border-top: 1px solid var(--border-color); margin-top: 15px; padding-top: 15px;">
+        <div style="font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 8px;">Commit Changes</div>
+        <input type="text" id="git-commit-input" placeholder="Message (e.g. Update features)..." style="width: 100%; padding: 8px; margin-bottom: 10px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; font-size: 12px;">
+        <button id="git-commit-btn" class="btn" style="background: var(--accent-blue); color: #fff; border: none; width: 100%; padding: 8px; font-weight: 500; cursor: pointer;">Commit All Changes</button>
+      </div>
+    `;
+  }
+
+  html += `
+    <div style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; justify-content: center;">
+      <button id="refresh-git-btn" class="btn" style="background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); width: 100%;">Refresh Status</button>
+    </div>
+  `;
+
+  gitModalBody.innerHTML = html;
+
+  const branchSelect = gitModalBody.querySelector('#git-branch-select');
+  if (branchSelect) {
+    branchSelect.addEventListener('change', async (e) => {
+      const selected = e.target.value;
+      if (selected === '__create_new__') {
+        const newName = prompt('Enter new branch name:');
+        if (newName && newName.trim()) {
+          const res = await window.electronAPI.gitCreateBranch({ dirPath: currentWorkspace, branchName: newName.trim() });
+          if (!res.success) alert(`Failed to create branch: ${res.error}`);
+          await updateGitStatus();
+          await renderGitModalContent();
+        } else {
+          branchSelect.value = status.branch;
+        }
+      } else if (selected !== status.branch) {
+        const res = await window.electronAPI.gitCheckoutBranch({ dirPath: currentWorkspace, branchName: selected });
+        if (!res.success) alert(`Failed to checkout branch: ${res.error}`);
+        await updateGitStatus();
+        await renderGitModalContent();
+      }
+    });
+  }
+
+  const commitBtn = gitModalBody.querySelector('#git-commit-btn');
+  const commitInput = gitModalBody.querySelector('#git-commit-input');
+  if (commitBtn && commitInput) {
+    commitBtn.addEventListener('click', async () => {
+      const msg = commitInput.value.trim();
+      if (!msg) {
+        alert('Please enter a commit message.');
+        return;
+      }
+      commitBtn.disabled = true;
+      commitBtn.textContent = 'Committing...';
+      const res = await window.electronAPI.gitCommit({ dirPath: currentWorkspace, message: msg });
+      if (res.success) {
+        await updateGitStatus();
+        await renderGitModalContent();
+      } else {
+        alert(`Commit failed: ${res.error}`);
+        commitBtn.disabled = false;
+        commitBtn.textContent = 'Commit All Changes';
+      }
+    });
+  }
+
+  const refreshBtn = gitModalBody.querySelector('#refresh-git-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      await renderGitModalContent();
+      await updateGitStatus();
+    });
+  }
+
+  const items = gitModalBody.querySelectorAll('.git-file-item');
+  items.forEach(item => {
+    item.addEventListener('click', () => {
+      const fullPath = item.getAttribute('data-path');
+      const relPath = item.getAttribute('data-rel');
+      if (fullPath) {
+        openFile(fullPath, relPath.split('/').pop());
+        if (gitModal) gitModal.classList.add('hidden');
+      }
+    });
+  });
+}
+
+if (gitBtn) {
+  gitBtn.addEventListener('click', async () => {
+    if (gitModal) gitModal.classList.remove('hidden');
+    await renderGitModalContent();
+  });
+}
+
+if (closeGitModalBtn) {
+  closeGitModalBtn.addEventListener('click', () => {
+    if (gitModal) gitModal.classList.add('hidden');
+  });
+}
+
+if (refreshGitBtn) {
+  refreshGitBtn.addEventListener('click', async () => {
+    await renderGitModalContent();
+    await updateGitStatus();
+  });
+}
+
+if (gitModal) {
+  gitModal.addEventListener('click', (e) => {
+    if (e.target === gitModal) {
+      gitModal.classList.add('hidden');
+    }
+  });
+}
+
 
 // Theme Handling
 const themeCards = document.querySelectorAll('.theme-card');

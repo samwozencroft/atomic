@@ -367,30 +367,62 @@ body {
   z-index: 999;
 }
 
+#status-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 #status-right {
   display: flex;
   align-items: center;
 }
 
-#status-right span, #status-left span {
+#status-right span {
   margin-left: 15px;
 }
 
 #settings-cog {
-  margin-right: 15px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  opacity: 0.7;
+  justify-content: center;
+  opacity: 0.85;
   transition: opacity 0.2s;
+  padding: 2px;
+  border-radius: 3px;
 }
 
 #settings-cog:hover {
   opacity: 1;
+  background-color: rgba(255, 255, 255, 0.15);
 }
+
+#git-btn {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  opacity: 0.85;
+  padding: 2px 5px;
+  border-radius: 3px;
+  transition: background-color 0.2s, opacity 0.2s;
+}
+
+#git-btn:hover {
+  opacity: 1;
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+#git-status-text {
+  margin-left: 5px;
+  font-size: 11px;
+  line-height: 1;
+}
+
 
 /* Settings & Unsaved Modals */
 #settings-modal,
+#git-modal,
 #unsaved-modal,
 #theme-marketplace-modal {
   position: fixed;
@@ -406,12 +438,90 @@ body {
 }
 
 #settings-modal.hidden,
+#git-modal.hidden,
 #unsaved-modal.hidden,
 #theme-marketplace-modal.hidden,
 #prompt-modal.hidden,
 #confirm-modal.hidden {
   display: none !important;
 }
+
+.git-section {
+  margin-bottom: 15px;
+}
+
+.git-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.git-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.git-file-item:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.git-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.git-badge-M { background: rgba(229, 192, 123, 0.2); color: #e5c07b; }
+.git-badge-A { background: rgba(152, 195, 121, 0.2); color: #98c379; }
+.git-badge-D { background: rgba(224, 108, 117, 0.2); color: #e06c75; }
+.git-badge-U { background: rgba(97, 175, 239, 0.2); color: #61afef; }
+
+.git-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.git-file-item:hover .git-action-btn {
+  opacity: 1;
+}
+
+.git-action-btn:hover {
+  color: var(--text-normal);
+  background: rgba(255,255,255,0.1);
+}
+
 
 .settings-content {
   background-color: var(--bg-dark);
@@ -448,7 +558,8 @@ body {
   color: var(--text-normal);
 }
 
-#close-settings {
+#close-settings,
+#close-git-modal {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -456,7 +567,8 @@ body {
   cursor: pointer;
 }
 
-#close-settings:hover {
+#close-settings:hover,
+#close-git-modal:hover {
   color: var(--text-normal);
 }
 
