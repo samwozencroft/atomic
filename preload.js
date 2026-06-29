@@ -33,5 +33,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitCommit: (payload) => ipcRenderer.invoke('git:commit', payload),
   gitGetBranches: (dirPath) => ipcRenderer.invoke('git:getBranches', dirPath),
   gitCheckoutBranch: (payload) => ipcRenderer.invoke('git:checkoutBranch', payload),
-  gitCreateBranch: (payload) => ipcRenderer.invoke('git:createBranch', payload)
+  gitCreateBranch: (payload) => ipcRenderer.invoke('git:createBranch', payload),
+  gitPush: (dirPath) => ipcRenderer.invoke('git:push', dirPath),
+  gitPull: (dirPath) => ipcRenderer.invoke('git:pull', dirPath),
+  gitFetch: (dirPath) => ipcRenderer.invoke('git:fetch', dirPath),
+  gitStash: (payload) => ipcRenderer.invoke('git:stash', payload),
+  gitStashPop: (dirPath) => ipcRenderer.invoke('git:stashPop', dirPath),
+  gitMerge: (payload) => ipcRenderer.invoke('git:merge', payload)
 });

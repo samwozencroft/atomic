@@ -569,3 +569,65 @@ ipcMain.handle('git:createBranch', async (event, { dirPath, branchName }) => {
   }
 });
 
+ipcMain.handle('git:push', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No workspace opened' };
+  try {
+    const { stdout } = await execFileAsync('git', ['push'], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:pull', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No workspace opened' };
+  try {
+    const { stdout } = await execFileAsync('git', ['pull'], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:fetch', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No workspace opened' };
+  try {
+    const { stdout } = await execFileAsync('git', ['fetch'], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:stash', async (event, { dirPath, message }) => {
+  if (!dirPath) return { success: false, error: 'No workspace opened' };
+  try {
+    const args = message ? ['stash', 'save', message] : ['stash'];
+    const { stdout } = await execFileAsync('git', args, { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:stashPop', async (event, dirPath) => {
+  if (!dirPath) return { success: false, error: 'No workspace opened' };
+  try {
+    const { stdout } = await execFileAsync('git', ['stash', 'pop'], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:merge', async (event, { dirPath, branchName }) => {
+  if (!dirPath || !branchName) return { success: false, error: 'Missing parameter' };
+  try {
+    const { stdout } = await execFileAsync('git', ['merge', branchName], { cwd: dirPath });
+    return { success: true, stdout };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+
