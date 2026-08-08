@@ -7,6 +7,9 @@ let openTabsLeft = [];
 let openTabsRight = [];
 let currentWorkspace = null;
 let expandedDirectories = new Set();
+let xtermInstance = null;
+let xtermFitAddon = null;
+let isPtySpawned = false;
 
 // Initialize window state if opened via tear-off
 async function initializeWindow() {
@@ -2412,10 +2415,6 @@ if (window.electronAPI && window.electronAPI.terminalGetShell) {
 }
 
 // REAL PTY TERMINAL INTEGRATION (Xterm.js + node-pty)
-let xtermInstance = null;
-let xtermFitAddon = null;
-let isPtySpawned = false;
-
 function updateXtermTheme() {
   if (!xtermInstance) return;
   const computed = getComputedStyle(document.body);
