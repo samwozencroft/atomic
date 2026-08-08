@@ -11,11 +11,35 @@
 </head>
 <body>
     <div class="app-container">
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <button id="open-folder-btn" class="btn">Open Folder</button>
+        <!-- Plugin Activity Bar (Left of file tree - only visible when plugins are enabled) -->
+        <div id="activity-bar" class="activity-bar hidden">
+            <div class="activity-bar-top" id="activity-plugin-icons">
+                <!-- Dynamic active plugin app icons rendered here -->
             </div>
-            <div id="file-tree" class="file-tree"></div>
+        </div>
+        <div class="sidebar" id="main-sidebar">
+            <div id="explorer-view" class="sidebar-view active">
+                <div class="sidebar-header">
+                    <button id="open-folder-btn" class="btn">Open Folder</button>
+                </div>
+                <div id="file-tree" class="file-tree"></div>
+            </div>
+            <div id="plugins-view" class="sidebar-view hidden">
+                <div class="sidebar-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 600; font-size: 12px; color: var(--text-normal); text-transform: uppercase; letter-spacing: 0.5px;">Installed Plugins</span>
+                    <button id="sidebar-browse-plugins-btn" class="btn-icon" title="Browse Community Plugins">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                    </button>
+                </div>
+                <div id="sidebar-installed-plugins" class="sidebar-plugin-list"></div>
+            </div>
+            <div id="custom-plugin-view" class="sidebar-view hidden">
+                <div class="sidebar-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span id="custom-plugin-view-title" style="font-weight: 600; font-size: 13px; color: var(--text-normal);">Plugin View</span>
+                    <button id="close-plugin-view-btn" class="btn-icon" title="Back to Explorer">&times;</button>
+                </div>
+                <div id="custom-plugin-view-body" class="custom-plugin-body"></div>
+            </div>
         </div>
         <div id="sidebar-resizer" class="resizer-x"></div>
         <div class="main-content">
@@ -170,6 +194,11 @@
             <label for="toggle-search">Search Bar</label>
             <input type="checkbox" id="toggle-search" checked>
           </div>
+          <div class="setting-item" style="margin-top: 15px; display: block;">
+            <label style="display: block; margin-bottom: 5px;">Plugins</label>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">Discover, install, and manage community IDE extensions.</div>
+            <button id="browse-plugins-btn" class="btn" style="width: 100%;">Browse Community Plugins</button>
+          </div>
           <div style="margin-top: 25px; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; justify-content: center;">
             <button id="report-issue-btn" class="btn" style="background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); width: 100%;">Report an Issue</button>
           </div>
@@ -289,6 +318,92 @@
           </div>
           
           <button id="upload-theme-btn" class="btn" style="width: 100%;">Upload Your Theme</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plugin Community Marketplace Modal -->
+    <div id="plugin-marketplace-modal" class="modal hidden">
+      <div class="settings-content" style="width: 640px; max-width: 92vw; max-height: 85vh; display: flex; flex-direction: column;">
+        <div class="settings-nav">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <button id="back-to-settings-plugin" class="btn-icon">←</button>
+            <h3>Community Plugins</h3>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <button id="refresh-plugins" class="btn-icon" title="Refresh Plugins">↻</button>
+            <button id="close-plugin-marketplace" class="btn-icon" title="Close">×</button>
+          </div>
+        </div>
+        <div class="settings-body" style="padding: 15px; overflow-y: auto; flex: 1;">
+          <!-- Navigation Tabs -->
+          <div class="plugin-modal-tabs">
+            <button class="plugin-tab-btn active" data-tab="community">Discover</button>
+            <button class="plugin-tab-btn" data-tab="installed">Installed</button>
+            <button class="plugin-tab-btn" data-tab="my-plugins">My Plugins</button>
+            <button class="plugin-tab-btn" data-tab="upload">Submit New Plugin</button>
+          </div>
+
+          <!-- Tab 1: Discover / Marketplace -->
+          <div id="plugin-tab-community" class="plugin-tab-content">
+            <input type="text" id="plugin-search" placeholder="Search plugins by name, author, or keyword..." style="width: 100%; padding: 8px 12px; margin-bottom: 12px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px;">
+            <div id="plugin-list" class="plugin-cards-list"></div>
+          </div>
+
+          <!-- Tab 2: Installed -->
+          <div id="plugin-tab-installed" class="plugin-tab-content hidden">
+            <div id="plugin-installed-list" class="plugin-cards-list"></div>
+          </div>
+
+          <!-- Tab 3: My Published Plugins / Developer Admin -->
+          <div id="plugin-tab-my-plugins" class="plugin-tab-content hidden">
+            <div style="background: var(--bg-darkest); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div style="font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px;">
+                  <span>Author Identity:</span>
+                  <span style="color: #98c379; background: rgba(152, 195, 121, 0.15); padding: 2px 6px; border-radius: 4px; font-size: 11px;">Verified 🛡️</span>
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Cryptographic ECDSA keypair protects your plugins against unauthorized modifications.</div>
+              </div>
+              <button id="export-dev-key-btn" class="btn" style="font-size: 11px; padding: 4px 8px; background: transparent; border-color: var(--border-color);">Backup Key</button>
+            </div>
+            <div id="my-plugins-list" class="plugin-cards-list"></div>
+
+            <!-- Update Plugin Form Container (Hidden until "Publish Update" clicked) -->
+            <div id="plugin-update-panel" class="hidden" style="background: var(--bg-darkest); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                <span id="update-panel-title" style="font-weight: 600; font-size: 13px;">Publish New Version</span>
+                <button id="cancel-update-panel-btn" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px;">&times;</button>
+              </div>
+              <input type="hidden" id="update-plugin-id">
+              <div style="display: flex; gap: 10px;">
+                <input type="text" id="update-plugin-name" placeholder="Plugin Name" style="flex: 1; padding: 6px 8px; background: var(--bg-dark); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; font-size: 12px;">
+                <input type="text" id="update-plugin-version" placeholder="New Version (e.g. 1.0.1)" style="flex: 1; padding: 6px 8px; background: var(--bg-dark); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; font-size: 12px;">
+              </div>
+              <input type="text" id="update-plugin-changelog" placeholder="Changelog (What's new in this release?)" style="width: 100%; padding: 6px 8px; background: var(--bg-dark); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; font-size: 12px;">
+              <div style="font-size: 11px; color: var(--text-muted);">Updated Plugin JavaScript:</div>
+              <textarea id="update-plugin-code" rows="7" style="width: 100%; font-family: monospace; font-size: 11px; padding: 8px; background: var(--bg-dark); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; resize: vertical;"></textarea>
+              <button id="submit-plugin-update-btn" class="btn" style="width: 100%; background: var(--accent-blue); color: #fff;">Sign & Submit Update For Review</button>
+            </div>
+          </div>
+
+          <!-- Tab 4: Submit New Plugin -->
+          <div id="plugin-tab-upload" class="plugin-tab-content hidden">
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Submit your custom IDE extension to the community. Submissions are cryptographically signed with your developer key and reviewed for safety.</div>
+            <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+              <input type="text" id="upload-plugin-id" placeholder="Plugin ID (e.g. atomic-s3-viewer)" style="flex: 1; padding: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+              <input type="text" id="upload-plugin-name" placeholder="Display Name" style="flex: 1; padding: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+            </div>
+            <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+              <input type="text" id="upload-plugin-author" placeholder="Author" style="flex: 1; padding: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+              <input type="text" id="upload-plugin-version" placeholder="Version (1.0.0)" style="flex: 1; padding: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+            </div>
+            <input type="text" id="upload-plugin-icon" placeholder="Icon SVG or Emoji (e.g. 🪣 or 📊)" style="width: 100%; padding: 8px; margin-bottom: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px;">
+            <textarea id="upload-plugin-desc" placeholder="Brief description of what this plugin does..." rows="2" style="width: 100%; padding: 8px; margin-bottom: 8px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; resize: vertical;"></textarea>
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Plugin Code (JavaScript):</div>
+            <textarea id="upload-plugin-code" placeholder="exports.onActivate = function(context) {&#10;  context.addSidebarView({ title: 'My Tool', render: (container) => { container.innerHTML = 'Hello World'; } });&#10;};" rows="6" style="width: 100%; font-family: monospace; font-size: 12px; padding: 8px; margin-bottom: 12px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; resize: vertical;"></textarea>
+            <button id="upload-plugin-btn" class="btn" style="width: 100%;">Sign & Submit Plugin For Approval</button>
+          </div>
         </div>
       </div>
     </div>

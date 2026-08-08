@@ -61,5 +61,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   terminalResizePty: (payload) => ipcRenderer.invoke('terminal:resizePty', payload),
   terminalKillPty: () => ipcRenderer.invoke('terminal:killPty'),
   onTerminalPtyData: (callback) => ipcRenderer.on('terminal:ptyData', (_event, data) => callback(data)),
-  onTerminalPtyExit: (callback) => ipcRenderer.on('terminal:ptyExit', (_event, data) => callback(data))
+  onTerminalPtyExit: (callback) => ipcRenderer.on('terminal:ptyExit', (_event, data) => callback(data)),
+  pluginGetDir: () => ipcRenderer.invoke('plugin:getDir'),
+  pluginGetInstalled: () => ipcRenderer.invoke('plugin:getInstalled'),
+  pluginInstall: (payload) => ipcRenderer.invoke('plugin:install', payload),
+  pluginUninstall: (pluginId) => ipcRenderer.invoke('plugin:uninstall', pluginId)
 });

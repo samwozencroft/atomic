@@ -1018,6 +1018,67 @@ ipcMain.handle('terminal:killPty', (event) => {
   }
 });
 
+// --- Plugin Management IPC Handlers ---
+async function ensurePluginsDir() {
+  const pluginsDir = path.join(app.getPath('userData'), 'plugins');
+  try {
+    await fs.mkdir(pluginsDir, { recursive: true });
+  } catch(e) {}
+  return pluginsDir;
+}
+
+ipcMain.handle('plugin:getDir', async () => {
+  return await ensurePluginsDir();
+});
+
+ipcMain.handle('plugin:getInstalled', async () => {
+  const pluginsDir = await ensurePluginsDir();
+  const installed = [];
+  try {
+    const entries = await fs.readdir(pluginsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json');
+        try {
+          const content = await fs.readFile(manifestPath, 'utf-8');
+          const data = JSON.parse(content);
+          installed.push(data);
+        } catch (e) {}
+      }
+    }
+  } catch (err) {
+    console.error('Failed to list installed plugins:', err);
+  }
+  return installed;
+});
+
+ipcMain.handle('plugin:install', async (event, pluginData) => {
+  if (!pluginData || !pluginData.id) return { success: false, error: 'Invalid plugin data' };
+  const pluginsDir = await ensurePluginsDir();
+  const pluginDir = path.join(pluginsDir, pluginData.id);
+  try {
+    await fs.mkdir(pluginDir, { recursive: true });
+    const manifestPath = path.join(pluginDir, 'plugin.json');
+    await fs.writeFile(manifestPath, JSON.stringify(pluginData, null, 2), 'utf-8');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('plugin:uninstall', async (event, pluginId) => {
+  if (!pluginId) return { success: false, error: 'Invalid plugin ID' };
+  const pluginsDir = await ensurePluginsDir();
+  const pluginDir = path.join(pluginsDir, pluginId);
+  try {
+    await fs.rm(pluginDir, { recursive: true, force: true });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+
 
 
 

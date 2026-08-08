@@ -10,3 +10,13 @@ themes/
 *.theme.css
 *.theme.json
 theme-*.css
+
+# Plugins
+plugins/
+*.plugin.js
+*.plugin.json
+plugin-*.js
+atomic-plugin*
+atomic-s3-viewer*
+atomic plugin - *
+

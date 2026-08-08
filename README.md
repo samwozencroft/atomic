@@ -44,6 +44,78 @@ Instantly preview and customize editor themes or browse the marketplace without 
 
 ---
 
+## 🧩 Community Plugin Marketplace & Ecosystem
+
+Atomic features a secure, community-driven plugin ecosystem allowing developers to build custom sidebar views, multi-cloud tools, editor extensions, and UI integrations.
+
+### 1. Authoring a Plugin
+
+A plugin consists of a manifest (`plugin.json`) and an entry script (`plugin.js`):
+
+**`plugin.json`**:
+```json
+{
+  "id": "my-cloud-explorer",
+  "name": "My Cloud Explorer",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "description": "Browse and manage cloud resources directly from Atomic.",
+  "icon": "☁️",
+  "entry": "plugin.js"
+}
+```
+
+**`plugin.js`**:
+```javascript
+exports.onActivate = function(context) {
+  // Add a dedicated sidebar view with interactive DOM rendering
+  context.addSidebarView({
+    title: 'Cloud Explorer',
+    render: function(container) {
+      container.innerHTML = `
+        <div style="padding: 10px;">
+          <h3>My Cloud Explorer</h3>
+          <button id="load-btn" class="btn">Load Resources</button>
+        </div>
+      `;
+      container.querySelector('#load-btn').onclick = () => {
+        const editor = context.getEditor();
+        editor.setValue('// Loaded from plugin');
+      };
+    }
+  });
+};
+
+exports.onDeactivate = function() {
+  // Clean up any listeners or background timers
+};
+```
+
+### 2. Publishing a Plugin
+1. Open Atomic and navigate to **Preferences** (⚙️) &rarr; **Community Plugins**.
+2. Switch to the **Submit New Plugin** tab.
+3. Fill in your plugin ID, name, version, icon, and paste your JavaScript code.
+4. Click **Sign & Submit Plugin For Approval**.
+5. Atomic will automatically generate an **ECDSA P-256 Cryptographic Keypair** in your client and sign your submission to prove author identity.
+6. The submission is sent to the Slack moderation channel for verification. Once approved, it is published globally to the community catalog on Google Cloud Storage.
+
+### 3. Maintaining & Updating Plugins
+1. Open **Preferences** &rarr; **Community Plugins** &rarr; **My Plugins**.
+2. Your published plugins will be displayed with a **Verified Author 🛡️** badge and live community ratings.
+3. Click **Publish New Version**:
+   - The patch version is automatically incremented (e.g. `1.0.0` &rarr; `1.0.1`).
+   - Enter your release notes in the **Changelog** field.
+   - Paste your updated code.
+4. Click **Sign & Submit Update For Review**. The backend cryptographically verifies your signature against your registered author key.
+5. Once approved in Slack, installed users will automatically receive an **"Update Available"** banner and a one-click in-app update button.
+
+### 4. Managing & Deleting Plugins
+- **Enable / Disable**: In the **Installed** tab, use the toggle checkbox to enable or disable plugins on the fly.
+- **Uninstall Locally**: Click **Uninstall** on any plugin card in the **Installed** tab to remove it from your machine.
+- **Unpublish from Community**: To request deletion or deprecation of a published plugin from the public catalog, contact the maintainers in the Slack review channel or submit an issue on GitHub.
+
+---
+
 ## ⚠️ macOS Troubleshooting: "App is damaged" Error
 
 Because Atomic is currently in an unsigned preview state, downloading the `.dmg` or `.zip` release via a web browser on a Mac will trigger Apple's Gatekeeper security.

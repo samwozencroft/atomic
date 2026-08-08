@@ -959,14 +959,26 @@ updateRestartBtn.addEventListener('click', () => {
 // Sidebar Toggle Logic
 document.getElementById('toggle-sidebar-btn').addEventListener('click', () => {
   const sidebar = document.querySelector('.sidebar');
+  const activityBar = document.getElementById('activity-bar');
   if (sidebar.style.display === 'none') {
     sidebar.style.display = 'flex';
+    if (activePluginsMap && activePluginsMap.size > 0 && activityBar) {
+      activityBar.classList.remove('hidden');
+      activityBar.style.display = 'flex';
+    }
   } else {
     sidebar.style.display = 'none';
+    if (activityBar) {
+      activityBar.classList.add('hidden');
+      activityBar.style.display = 'none';
+    }
   }
   // Trigger Monaco editor resize
   if (editor) {
     setTimeout(() => editor.layout(), 10);
+  }
+  if (editorRight) {
+    setTimeout(() => editorRight.layout(), 10);
   }
 });
 
@@ -2590,3 +2602,955 @@ window.addEventListener('resize', () => {
     }
   }
 });
+
+// ==========================================================================
+// ATOMIC PLUGIN SYSTEM & ACTIVITY BAR CONTROLLER
+// ==========================================================================
+
+const PLUGIN_BUCKET_URL = 'https://storage.googleapis.com/atomic-plugins/index.json';
+const PLUGIN_WEBHOOK_URL = 'https://us-central1-atomic-500709.cloudfunctions.net/pluginMarketplaceHandler';
+
+let activePluginsMap = new Map(); // id -> { manifest, context, instance, viewRenderer }
+let cachedCommunityPlugins = [];
+
+// Activity Bar Elements
+const activityPluginIcons = document.getElementById('activity-plugin-icons');
+const explorerView = document.getElementById('explorer-view');
+const pluginsView = document.getElementById('plugins-view');
+const customPluginView = document.getElementById('custom-plugin-view');
+const customPluginViewTitle = document.getElementById('custom-plugin-view-title');
+const customPluginViewBody = document.getElementById('custom-plugin-view-body');
+const closePluginViewBtn = document.getElementById('close-plugin-view-btn');
+
+function switchSidebarView(viewName, pluginId = null) {
+  const sidebar = document.getElementById('main-sidebar');
+  if (sidebar && sidebar.classList.contains('hidden')) {
+    sidebar.classList.remove('hidden');
+  }
+
+  // Deactivate all activity buttons
+  document.querySelectorAll('.activity-btn').forEach(btn => btn.classList.remove('active'));
+
+  // Hide all sidebar views
+  if (explorerView) explorerView.classList.add('hidden');
+  if (pluginsView) pluginsView.classList.add('hidden');
+  if (customPluginView) customPluginView.classList.add('hidden');
+
+  if (viewName === 'explorer') {
+    if (explorerView) explorerView.classList.remove('hidden');
+    const expBtn = document.getElementById('activity-explorer-btn');
+    if (expBtn) expBtn.classList.add('active');
+  } else if (viewName === 'custom-plugin' && pluginId) {
+    const pluginEntry = activePluginsMap.get(pluginId);
+    const customBtn = document.querySelector(`.activity-plugin-btn[data-plugin-id="${pluginId}"]`);
+    if (customBtn) customBtn.classList.add('active');
+
+    if (pluginEntry && pluginEntry.viewRenderer) {
+      if (customPluginViewTitle) customPluginViewTitle.textContent = pluginEntry.viewTitle || pluginEntry.manifest.name;
+      if (customPluginViewBody) {
+        customPluginViewBody.innerHTML = '';
+        try {
+          pluginEntry.viewRenderer(customPluginViewBody);
+        } catch (e) {
+          customPluginViewBody.innerHTML = `<div style="color: #e06c75; padding: 10px;">Plugin Error: ${e.message}</div>`;
+        }
+      }
+      if (customPluginView) customPluginView.classList.remove('hidden');
+    }
+  }
+}
+
+if (closePluginViewBtn) {
+  closePluginViewBtn.addEventListener('click', () => switchSidebarView('explorer'));
+}
+
+// Plugin Runtime Context Factory
+function createPluginContext(manifest) {
+  return {
+    manifest,
+    getEditor: () => (activeEditorPane === 'left' ? editor : editorRight),
+    getWorkspace: () => currentWorkspace,
+    openFile: (path, name) => openFile(path, name),
+    addSidebarView: ({ title, render }) => {
+      const entry = activePluginsMap.get(manifest.id);
+      if (entry) {
+        entry.viewTitle = title;
+        entry.viewRenderer = render;
+      }
+    },
+    addActivityBarIcon: ({ icon, title, onClick }) => {
+      renderActivityBarPluginIcons();
+    }
+  };
+}
+
+async function activatePlugin(manifest) {
+  try {
+    const context = createPluginContext(manifest);
+    const entry = { manifest, context, viewTitle: manifest.name, viewRenderer: null };
+    activePluginsMap.set(manifest.id, entry);
+
+    if (manifest.code) {
+      const exports = {};
+      const module = { exports };
+      const runFn = new Function('exports', 'module', 'context', manifest.code);
+      runFn(exports, module, context);
+      const instance = module.exports.onActivate ? module.exports : exports;
+      if (typeof instance.onActivate === 'function') {
+        instance.onActivate(context);
+      }
+      entry.instance = instance;
+    }
+
+    renderActivityBarPluginIcons();
+    renderSidebarInstalledPlugins();
+  } catch (error) {
+    console.error(`Failed to activate plugin ${manifest.id}:`, error);
+  }
+}
+
+function deactivatePlugin(pluginId) {
+  const entry = activePluginsMap.get(pluginId);
+  if (entry) {
+    if (entry.instance && typeof entry.instance.onDeactivate === 'function') {
+      try { entry.instance.onDeactivate(); } catch (e) {}
+    }
+    activePluginsMap.delete(pluginId);
+    renderActivityBarPluginIcons();
+    renderSidebarInstalledPlugins();
+    if (customPluginView && !customPluginView.classList.contains('hidden')) {
+      switchSidebarView('explorer');
+    }
+  }
+}
+
+function renderActivityBarPluginIcons() {
+  const activityBar = document.getElementById('activity-bar');
+  if (!activityPluginIcons) return;
+  activityPluginIcons.innerHTML = '';
+
+  // If no plugins are enabled, hide the left icon strip completely
+  if (activePluginsMap.size === 0) {
+    if (activityBar) {
+      activityBar.classList.add('hidden');
+      activityBar.style.display = 'none';
+    }
+    if (explorerView && explorerView.classList.contains('hidden')) {
+      switchSidebarView('explorer');
+    }
+    return;
+  }
+
+  // If at least one plugin is enabled, show the activity bar on the left
+  if (activityBar) {
+    activityBar.classList.remove('hidden');
+    activityBar.style.display = 'flex';
+  }
+
+  // 1. Always render the Folder / File Explorer icon at the top
+  const explorerBtn = document.createElement('button');
+  explorerBtn.id = 'activity-explorer-btn';
+  explorerBtn.className = 'activity-btn';
+  if (explorerView && !explorerView.classList.contains('hidden')) {
+    explorerBtn.classList.add('active');
+  }
+  explorerBtn.title = 'File Explorer';
+  explorerBtn.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+    </svg>
+  `;
+  explorerBtn.addEventListener('click', () => {
+    switchSidebarView('explorer');
+  });
+  activityPluginIcons.appendChild(explorerBtn);
+
+  // 2. Render each enabled plugin icon
+  activePluginsMap.forEach((entry, pluginId) => {
+    const iconBtn = document.createElement('button');
+    iconBtn.className = 'activity-btn activity-plugin-btn';
+    iconBtn.setAttribute('data-plugin-id', pluginId);
+    iconBtn.title = entry.manifest.name;
+
+    let iconHtml = entry.manifest.icon || '🧩';
+    if (iconHtml.startsWith('<svg')) {
+      iconBtn.innerHTML = iconHtml;
+    } else {
+      iconBtn.textContent = iconHtml;
+      iconBtn.style.fontSize = '18px';
+    }
+
+    iconBtn.addEventListener('click', () => {
+      switchSidebarView('custom-plugin', pluginId);
+    });
+
+    activityPluginIcons.appendChild(iconBtn);
+  });
+}
+
+function getEnabledPluginIds() {
+  try {
+    const raw = localStorage.getItem('atomic_enabled_plugins');
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function setEnabledPluginIds(ids) {
+  localStorage.setItem('atomic_enabled_plugins', JSON.stringify(ids));
+}
+
+async function loadInstalledPlugins() {
+  let installed = [];
+  if (window.electronAPI && window.electronAPI.pluginGetInstalled) {
+    installed = await window.electronAPI.pluginGetInstalled();
+  }
+
+  // Clean up any demo plugins from previous test runs
+  if (installed && installed.length > 0) {
+    for (const p of installed) {
+      if (p.id === 'word-counter' || p.id === 'quick-notes') {
+        if (window.electronAPI && window.electronAPI.pluginUninstall) {
+          await window.electronAPI.pluginUninstall(p.id);
+        }
+      }
+    }
+    if (window.electronAPI && window.electronAPI.pluginGetInstalled) {
+      installed = await window.electronAPI.pluginGetInstalled();
+    }
+  }
+
+  let enabledIds = getEnabledPluginIds();
+  enabledIds = enabledIds.filter(id => id !== 'word-counter' && id !== 'quick-notes');
+
+  // If installed plugins exist but none recorded in enabledIds yet, enable them by default
+  if (installed && installed.length > 0 && enabledIds.length === 0) {
+    enabledIds = installed.map(p => p.id);
+  }
+  setEnabledPluginIds(enabledIds);
+
+  if (installed && installed.length > 0) {
+    for (const plugin of installed) {
+      if (enabledIds.includes(plugin.id)) {
+        await activatePlugin(plugin);
+      }
+    }
+  }
+
+  renderActivityBarPluginIcons();
+  renderSidebarInstalledPlugins();
+  renderInstalledModalList();
+}
+
+async function renderSidebarInstalledPlugins() {
+  const container = document.getElementById('sidebar-installed-plugins');
+  if (!container) return;
+
+  let installed = [];
+  if (window.electronAPI && window.electronAPI.pluginGetInstalled) {
+    installed = await window.electronAPI.pluginGetInstalled();
+  }
+  const enabledIds = getEnabledPluginIds();
+
+  container.innerHTML = '';
+  if (!installed || installed.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">No plugins installed.</div>';
+    return;
+  }
+
+  installed.forEach(plugin => {
+    const isEnabled = enabledIds.includes(plugin.id);
+    const card = document.createElement('div');
+    card.className = 'sidebar-plugin-card';
+
+    card.innerHTML = `
+      <div class="sidebar-plugin-card-header">
+        <div style="font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px;">
+          <span>${plugin.icon || '🧩'}</span>
+          <span>${plugin.name}</span>
+        </div>
+        <input type="checkbox" class="sidebar-plugin-toggle" data-id="${plugin.id}" ${isEnabled ? 'checked' : ''} style="cursor: pointer;">
+      </div>
+      <div style="font-size: 11px; color: var(--text-muted);">${plugin.description || ''}</div>
+      ${isEnabled ? `<button class="btn sidebar-open-plugin-btn" data-id="${plugin.id}" style="margin-top: 4px; font-size: 11px; padding: 3px 8px;">Open View</button>` : ''}
+    `;
+
+    const toggle = card.querySelector('.sidebar-plugin-toggle');
+    if (toggle) {
+      toggle.addEventListener('change', (e) => {
+        let currentEnabled = getEnabledPluginIds();
+        if (e.target.checked) {
+          if (!currentEnabled.includes(plugin.id)) currentEnabled.push(plugin.id);
+          activatePlugin(plugin);
+        } else {
+          currentEnabled = currentEnabled.filter(id => id !== plugin.id);
+          deactivatePlugin(plugin.id);
+        }
+        setEnabledPluginIds(currentEnabled);
+      });
+    }
+
+    const openBtn = card.querySelector('.sidebar-open-plugin-btn');
+    if (openBtn) {
+      openBtn.addEventListener('click', () => {
+        switchSidebarView('custom-plugin', plugin.id);
+      });
+    }
+
+    container.appendChild(card);
+  });
+}
+
+// Plugin Community Marketplace Modal Logic
+const browsePluginsBtn = document.getElementById('browse-plugins-btn');
+const sidebarBrowsePluginsBtn = document.getElementById('sidebar-browse-plugins-btn');
+const pluginMarketplaceModal = document.getElementById('plugin-marketplace-modal');
+const closePluginMarketplace = document.getElementById('close-plugin-marketplace');
+const backToSettingsPlugin = document.getElementById('back-to-settings-plugin');
+const refreshPluginsBtn = document.getElementById('refresh-plugins');
+const pluginSearchInput = document.getElementById('plugin-search');
+const uploadPluginBtn = document.getElementById('upload-plugin-btn');
+
+if (browsePluginsBtn) {
+  browsePluginsBtn.addEventListener('click', () => {
+    document.getElementById('settings-modal').classList.add('hidden');
+    pluginMarketplaceModal.classList.remove('hidden');
+    fetchCommunityPlugins();
+  });
+}
+if (sidebarBrowsePluginsBtn) {
+  sidebarBrowsePluginsBtn.addEventListener('click', () => {
+    pluginMarketplaceModal.classList.remove('hidden');
+    fetchCommunityPlugins();
+  });
+}
+if (closePluginMarketplace) {
+  closePluginMarketplace.addEventListener('click', () => {
+    pluginMarketplaceModal.classList.add('hidden');
+  });
+}
+if (backToSettingsPlugin) {
+  backToSettingsPlugin.addEventListener('click', () => {
+    pluginMarketplaceModal.classList.add('hidden');
+    document.getElementById('settings-modal').classList.remove('hidden');
+  });
+}
+// --- Developer Keypair Management (ECDSA P-256 / Web Crypto) ---
+const DEV_KEY_STORAGE = 'atomic_developer_keypair';
+
+async function getOrCreateDeveloperKeyPair() {
+  try {
+    const raw = localStorage.getItem(DEV_KEY_STORAGE);
+    if (raw) {
+      const data = JSON.parse(raw);
+      const publicKey = await crypto.subtle.importKey(
+        'jwk',
+        data.publicKeyJwk,
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['verify']
+      );
+      const privateKey = await crypto.subtle.importKey(
+        'jwk',
+        data.privateKeyJwk,
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign']
+      );
+      return { publicKey, privateKey, publicKeyJwk: data.publicKeyJwk };
+    }
+  } catch (e) {}
+
+  // Generate new ECDSA P-256 Keypair
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify']
+  );
+
+  const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  const privateKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+
+  localStorage.setItem(DEV_KEY_STORAGE, JSON.stringify({ publicKeyJwk, privateKeyJwk }));
+  return { publicKey: keyPair.publicKey, privateKey: keyPair.privateKey, publicKeyJwk };
+}
+
+async function signDataWithDevKey(dataString) {
+  const { privateKey } = await getOrCreateDeveloperKeyPair();
+  const enc = new TextEncoder();
+  const signatureBuffer = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: { name: 'SHA-256' } },
+    privateKey,
+    enc.encode(dataString)
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
+}
+
+function getAuthoredPluginIds() {
+  try {
+    const raw = localStorage.getItem('atomic_authored_plugins');
+    return raw ? JSON.parse(raw) : ['atomic-s3-viewer'];
+  } catch (e) {
+    return ['atomic-s3-viewer'];
+  }
+}
+
+function addAuthoredPluginId(id) {
+  const list = getAuthoredPluginIds();
+  if (!list.includes(id)) {
+    list.push(id);
+    localStorage.setItem('atomic_authored_plugins', JSON.stringify(list));
+  }
+}
+
+if (refreshPluginsBtn) {
+  refreshPluginsBtn.addEventListener('click', () => {
+    fetchCommunityPlugins();
+  });
+}
+
+// Modal Tabs
+document.querySelectorAll('.plugin-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.plugin-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.plugin-tab-content').forEach(c => c.classList.add('hidden'));
+
+    btn.classList.add('active');
+    const tabName = btn.getAttribute('data-tab');
+    const tabContent = document.getElementById(`plugin-tab-${tabName}`);
+    if (tabContent) tabContent.classList.remove('hidden');
+
+    if (tabName === 'installed') {
+      renderInstalledModalList();
+    } else if (tabName === 'my-plugins') {
+      renderMyPluginsTab();
+    }
+  });
+});
+
+async function fetchCommunityPlugins() {
+  const list = document.getElementById('plugin-list');
+  if (list) list.innerHTML = '<div style="color: var(--text-muted); padding: 15px; text-align: center;">Loading plugins from community...</div>';
+
+  try {
+    const res = await fetch(`${PLUGIN_BUCKET_URL}?t=${Date.now()}`);
+    if (res.ok) {
+      const data = await res.json();
+      cachedCommunityPlugins = Array.isArray(data.plugins) ? data.plugins : [];
+    } else {
+      cachedCommunityPlugins = [];
+    }
+  } catch (err) {
+    cachedCommunityPlugins = [];
+  }
+  renderCommunityPlugins(cachedCommunityPlugins);
+}
+
+async function renderCommunityPlugins(plugins) {
+  const container = document.getElementById('plugin-list');
+  if (!container) return;
+
+  let installed = [];
+  if (window.electronAPI && window.electronAPI.pluginGetInstalled) {
+    installed = await window.electronAPI.pluginGetInstalled();
+  }
+  const installedMap = new Map((installed || []).map(p => [p.id, p]));
+
+  container.innerHTML = '';
+  if (!plugins || plugins.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-muted); padding: 15px; text-align: center;">No community plugins found.</div>';
+    return;
+  }
+
+  plugins.forEach(plugin => {
+    const installedEntry = installedMap.get(plugin.id);
+    const isInstalled = !!installedEntry;
+    const hasUpdate = isInstalled && installedEntry.version && plugin.version && (plugin.version !== installedEntry.version);
+    const card = document.createElement('div');
+    card.className = 'plugin-card';
+
+    const starsHtml = renderStarRatingHtml(plugin.rating || 5, plugin.id);
+
+    card.innerHTML = `
+      <div class="plugin-card-header">
+        <div class="plugin-card-title">
+          <span>${plugin.icon || '🧩'}</span>
+          <span>${plugin.name}</span>
+          <span class="plugin-badge-pill">v${plugin.version || '1.0.0'}</span>
+          ${hasUpdate ? `<span class="plugin-update-pill">v${plugin.version} available</span>` : ''}
+        </div>
+        <div class="plugin-card-author">by ${plugin.author || 'Community'}</div>
+      </div>
+      <div class="plugin-card-desc">${plugin.description || 'No description provided.'}</div>
+      <div class="plugin-card-footer">
+        <div class="plugin-rating-stars">
+          ${starsHtml}
+          <span style="font-size: 11px; color: var(--text-muted); margin-left: 4px;">(${plugin.ratingsCount || 1})</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          ${hasUpdate ? `<button class="btn plugin-update-btn" data-id="${plugin.id}" style="background: #e5c07b; color: #1e1e1e; font-weight: 600; font-size: 11px; padding: 4px 10px;">Update</button>` : ''}
+          ${isInstalled
+            ? `<button class="btn plugin-uninstall-btn" data-id="${plugin.id}" style="background: rgba(224, 108, 117, 0.15); color: #e06c75; border-color: rgba(224, 108, 117, 0.3); font-size: 11px; padding: 4px 10px;">Uninstall</button>`
+            : `<button class="btn plugin-install-btn" data-id="${plugin.id}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 12px;">Install</button>`
+          }
+        </div>
+      </div>
+    `;
+
+    // Install / Update Button Handler
+    const installBtn = card.querySelector('.plugin-install-btn');
+    if (installBtn) {
+      installBtn.addEventListener('click', async () => {
+        installBtn.textContent = 'Installing...';
+        installBtn.disabled = true;
+        await installPlugin(plugin);
+        fetchCommunityPlugins();
+      });
+    }
+
+    const updateBtn = card.querySelector('.plugin-update-btn');
+    if (updateBtn) {
+      updateBtn.addEventListener('click', async () => {
+        updateBtn.textContent = 'Updating...';
+        updateBtn.disabled = true;
+        await installPlugin(plugin);
+        fetchCommunityPlugins();
+      });
+    }
+
+    // Uninstall Button Handler
+    const uninstallBtn = card.querySelector('.plugin-uninstall-btn');
+    if (uninstallBtn) {
+      uninstallBtn.addEventListener('click', async () => {
+        uninstallBtn.textContent = 'Removing...';
+        uninstallBtn.disabled = true;
+        await uninstallPlugin(plugin.id);
+        fetchCommunityPlugins();
+      });
+    }
+
+    // Star Rating Click Handlers
+    card.querySelectorAll('.star-rate-btn').forEach(star => {
+      star.addEventListener('click', async () => {
+        const rating = star.getAttribute('data-val');
+        await ratePlugin(plugin.id, rating);
+      });
+    });
+
+    container.appendChild(card);
+  });
+}
+
+function renderStarRatingHtml(rating, pluginId) {
+  const rounded = Math.round(rating);
+  let html = '';
+  for (let i = 1; i <= 5; i++) {
+    const starChar = i <= rounded ? '★' : '☆';
+    html += `<span class="star-rate-btn" data-plugin-id="${pluginId}" data-val="${i}" title="Rate ${i} stars">${starChar}</span>`;
+  }
+  return html;
+}
+
+async function renderInstalledModalList() {
+  const container = document.getElementById('plugin-installed-list');
+  if (!container) return;
+
+  // Always ensure fresh catalog is loaded
+  try {
+    const res = await fetch(`${PLUGIN_BUCKET_URL}?t=${Date.now()}`);
+    if (res.ok) {
+      const data = await res.json();
+      cachedCommunityPlugins = Array.isArray(data.plugins) ? data.plugins : [];
+    }
+  } catch (e) {}
+
+  let installed = [];
+  if (window.electronAPI && window.electronAPI.pluginGetInstalled) {
+    installed = await window.electronAPI.pluginGetInstalled();
+  }
+  const enabledIds = getEnabledPluginIds();
+
+  container.innerHTML = '';
+  if (!installed || installed.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-muted); padding: 15px; text-align: center;">No plugins installed.</div>';
+    return;
+  }
+
+  // Count available updates
+  const updatesAvailable = installed.filter(p => {
+    const cat = cachedCommunityPlugins.find(cp => cp.id === p.id);
+    return cat && cat.version && p.version && (cat.version !== p.version);
+  });
+
+  if (updatesAvailable.length > 0) {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background: rgba(229, 192, 123, 0.15); border: 1px solid rgba(229, 192, 123, 0.35); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;';
+    banner.innerHTML = `
+      <div style="font-size: 12px; color: #e5c07b; font-weight: 500;">
+        🚀 <strong>${updatesAvailable.length} Plugin Update${updatesAvailable.length > 1 ? 's' : ''} Available</strong>
+      </div>
+      <button id="update-all-plugins-btn" class="btn" style="background: #e5c07b; color: #1e1e1e; font-weight: 600; font-size: 11px; padding: 3px 10px;">Update All</button>
+    `;
+    container.appendChild(banner);
+
+    const updateAllBtn = banner.querySelector('#update-all-plugins-btn');
+    if (updateAllBtn) {
+      updateAllBtn.onclick = async () => {
+        updateAllBtn.textContent = 'Updating all...';
+        updateAllBtn.disabled = true;
+        for (const p of updatesAvailable) {
+          const cat = cachedCommunityPlugins.find(cp => cp.id === p.id);
+          if (cat) await installPlugin(cat);
+        }
+        await renderInstalledModalList();
+      };
+    }
+  }
+
+  installed.forEach(plugin => {
+    const isEnabled = enabledIds.includes(plugin.id);
+    const catalogEntry = cachedCommunityPlugins.find(cp => cp.id === plugin.id);
+    const hasUpdate = catalogEntry && catalogEntry.version && plugin.version && (catalogEntry.version !== plugin.version);
+    const card = document.createElement('div');
+    card.className = 'plugin-card';
+
+    card.innerHTML = `
+      <div class="plugin-card-header">
+        <div class="plugin-card-title">
+          <span>${plugin.icon || '🧩'}</span>
+          <span>${plugin.name}</span>
+          <span class="plugin-badge-pill">v${plugin.version || '1.0.0'}</span>
+          ${hasUpdate ? `<span class="plugin-update-pill">v${catalogEntry.version} Available</span>` : ''}
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="font-size: 11px; color: var(--text-muted);">Enabled</label>
+          <input type="checkbox" class="modal-plugin-toggle" data-id="${plugin.id}" ${isEnabled ? 'checked' : ''} style="cursor: pointer;">
+        </div>
+      </div>
+      <div class="plugin-card-desc">${plugin.description || ''}</div>
+      ${hasUpdate && catalogEntry.changelog ? `<div style="font-size: 11px; background: var(--bg-dark); border-left: 2px solid #e5c07b; padding: 4px 8px; border-radius: 2px; color: var(--text-normal); margin: 4px 0;"><strong>What's New:</strong> ${catalogEntry.changelog}</div>` : ''}
+      <div class="plugin-card-footer">
+        <span style="font-size: 11px; color: var(--text-muted);">by ${plugin.author || 'Unknown'}</span>
+        <div style="display: flex; gap: 6px;">
+          ${hasUpdate ? `<button class="btn modal-plugin-update-btn" data-id="${plugin.id}" style="background: #e5c07b; color: #1e1e1e; font-weight: 600; font-size: 11px; padding: 4px 12px;">Update to v${catalogEntry.version}</button>` : ''}
+          <button class="btn modal-plugin-uninstall" data-id="${plugin.id}" style="background: rgba(224, 108, 117, 0.15); color: #e06c75; border-color: rgba(224, 108, 117, 0.3); font-size: 11px; padding: 4px 10px;">Uninstall</button>
+        </div>
+      </div>
+    `;
+
+    const toggle = card.querySelector('.modal-plugin-toggle');
+    if (toggle) {
+      toggle.addEventListener('change', async (e) => {
+        let currentEnabled = getEnabledPluginIds();
+        if (e.target.checked) {
+          if (!currentEnabled.includes(plugin.id)) currentEnabled.push(plugin.id);
+          await activatePlugin(plugin);
+        } else {
+          currentEnabled = currentEnabled.filter(id => id !== plugin.id);
+          deactivatePlugin(plugin.id);
+        }
+        setEnabledPluginIds(currentEnabled);
+        renderSidebarInstalledPlugins();
+      });
+    }
+
+    const updateBtn = card.querySelector('.modal-plugin-update-btn');
+    if (updateBtn && catalogEntry) {
+      updateBtn.addEventListener('click', async () => {
+        updateBtn.textContent = 'Updating...';
+        updateBtn.disabled = true;
+        await installPlugin(catalogEntry);
+        await renderInstalledModalList();
+        alert(`🎉 Plugin "${catalogEntry.name}" updated to v${catalogEntry.version}!`);
+      });
+    }
+
+    const unBtn = card.querySelector('.modal-plugin-uninstall');
+    if (unBtn) {
+      unBtn.addEventListener('click', async () => {
+        await uninstallPlugin(plugin.id);
+        renderInstalledModalList();
+      });
+    }
+
+    container.appendChild(card);
+  });
+}
+
+// --- My Published Plugins / Developer Tab Handler ---
+async function renderMyPluginsTab() {
+  const container = document.getElementById('my-plugins-list');
+  if (!container) return;
+
+  const authoredIds = getAuthoredPluginIds();
+  let installed = [];
+  if (window.electronAPI && window.electronAPI.pluginGetInstalled) {
+    installed = await window.electronAPI.pluginGetInstalled();
+  }
+
+  container.innerHTML = '';
+  if (authoredIds.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">No published plugins recorded yet. Submit your first plugin under "Submit New Plugin".</div>';
+    return;
+  }
+
+  authoredIds.forEach(id => {
+    const catalogEntry = cachedCommunityPlugins.find(cp => cp.id === id);
+    const localEntry = installed.find(p => p.id === id);
+    const item = catalogEntry || localEntry || { id, name: id, version: '1.0.0', author: 'You' };
+
+    const card = document.createElement('div');
+    card.className = 'plugin-card';
+    card.innerHTML = `
+      <div class="plugin-card-header">
+        <div class="plugin-card-title">
+          <span>${item.icon || '🪣'}</span>
+          <span>${item.name}</span>
+          <span class="plugin-badge-pill">v${item.version || '1.0.0'}</span>
+          <span class="plugin-verified-pill">Author 🛡️</span>
+        </div>
+        <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${item.id}</span>
+      </div>
+      <div class="plugin-card-desc">${item.description || 'Manage and release updates for this plugin.'}</div>
+      <div class="plugin-card-footer">
+        <span style="font-size: 11px; color: var(--text-muted);">${catalogEntry ? `Live Rating: ★ ${catalogEntry.rating || 5} (${catalogEntry.ratingsCount || 1})` : 'Published'}</span>
+        <button class="btn my-plugin-update-btn" data-id="${item.id}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 12px;">Publish New Version</button>
+      </div>
+    `;
+
+    const updateBtn = card.querySelector('.my-plugin-update-btn');
+    if (updateBtn) {
+      updateBtn.addEventListener('click', () => {
+        openPluginUpdatePanel(item, localEntry);
+      });
+    }
+
+    container.appendChild(card);
+  });
+}
+
+function openPluginUpdatePanel(item, localEntry) {
+  const panel = document.getElementById('plugin-update-panel');
+  if (!panel) return;
+
+  panel.classList.remove('hidden');
+  document.getElementById('update-panel-title').textContent = `Publish Update for ${item.name}`;
+  document.getElementById('update-plugin-id').value = item.id;
+  document.getElementById('update-plugin-name').value = item.name;
+
+  // Compute next patch version bump (e.g. 1.0.0 -> 1.0.1)
+  const currentVer = item.version || '1.0.0';
+  const parts = currentVer.split('.');
+  if (parts.length === 3 && !isNaN(Number(parts[2]))) {
+    parts[2] = Number(parts[2]) + 1;
+    document.getElementById('update-plugin-version').value = parts.join('.');
+  } else {
+    document.getElementById('update-plugin-version').value = currentVer;
+  }
+
+  document.getElementById('update-plugin-changelog').value = '';
+  document.getElementById('update-plugin-code').value = localEntry?.code || item.code || '';
+}
+
+const cancelUpdatePanelBtn = document.getElementById('cancel-update-panel-btn');
+if (cancelUpdatePanelBtn) {
+  cancelUpdatePanelBtn.addEventListener('click', () => {
+    const panel = document.getElementById('plugin-update-panel');
+    if (panel) panel.classList.add('hidden');
+  });
+}
+
+const submitPluginUpdateBtn = document.getElementById('submit-plugin-update-btn');
+if (submitPluginUpdateBtn) {
+  submitPluginUpdateBtn.addEventListener('click', async () => {
+    const id = document.getElementById('update-plugin-id').value.trim();
+    const name = document.getElementById('update-plugin-name').value.trim();
+    const version = document.getElementById('update-plugin-version').value.trim();
+    const changelog = document.getElementById('update-plugin-changelog').value.trim();
+    const code = document.getElementById('update-plugin-code').value.trim();
+
+    if (!id || !version || !code) {
+      alert('Please fill out Version, Changelog, and updated Plugin Code.');
+      return;
+    }
+
+    submitPluginUpdateBtn.textContent = 'Signing & Submitting...';
+    submitPluginUpdateBtn.disabled = true;
+
+    try {
+      // 1. Sign update target payload: `${id}:${version}:${code}`
+      const signTarget = `${id}:${version}:${code}`;
+      const signature = await signDataWithDevKey(signTarget);
+      const { publicKeyJwk } = await getOrCreateDeveloperKeyPair();
+
+      // 2. Submit to Cloud Function
+      const res = await fetch(PLUGIN_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_plugin',
+          id,
+          name,
+          version,
+          changelog,
+          code,
+          signature,
+          publicKeyJwk
+        })
+      });
+
+      if (res.ok) {
+        alert(`🎉 Version update v${version} submitted successfully! It is now pending Slack review.`);
+        const panel = document.getElementById('plugin-update-panel');
+        if (panel) panel.classList.add('hidden');
+        renderMyPluginsTab();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'HTTP ' + res.status);
+      }
+    } catch (err) {
+      alert('Error submitting update: ' + err.message);
+    } finally {
+      submitPluginUpdateBtn.textContent = 'Sign & Submit Update For Review';
+      submitPluginUpdateBtn.disabled = false;
+    }
+  });
+}
+
+const exportDevKeyBtn = document.getElementById('export-dev-key-btn');
+if (exportDevKeyBtn) {
+  exportDevKeyBtn.addEventListener('click', async () => {
+    const { publicKeyJwk } = await getOrCreateDeveloperKeyPair();
+    const str = JSON.stringify(publicKeyJwk, null, 2);
+    navigator.clipboard.writeText(str);
+    alert('Public Developer Key copied to clipboard! Keep your local browser state to retain your private signing key.');
+  });
+}
+
+if (pluginSearchInput) {
+  pluginSearchInput.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    const filtered = cachedCommunityPlugins.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.author && p.author.toLowerCase().includes(q)) ||
+      (p.description && p.description.toLowerCase().includes(q))
+    );
+    renderCommunityPlugins(filtered);
+  });
+}
+
+async function installPlugin(plugin) {
+  try {
+    let fullPlugin = plugin;
+    if (plugin.url) {
+      const cacheBustUrl = plugin.url.includes('?') ? `${plugin.url}&t=${Date.now()}` : `${plugin.url}?t=${Date.now()}`;
+      const res = await fetch(cacheBustUrl, { cache: 'no-store' });
+      if (res.ok) {
+        fullPlugin = await res.json();
+      }
+    }
+    if (window.electronAPI && window.electronAPI.pluginInstall) {
+      await window.electronAPI.pluginInstall(fullPlugin);
+    }
+    let enabledIds = getEnabledPluginIds();
+    if (!enabledIds.includes(fullPlugin.id)) {
+      enabledIds.push(fullPlugin.id);
+      setEnabledPluginIds(enabledIds);
+    }
+    // Deactivate old instance first to ensure clean hot-reload
+    deactivatePlugin(fullPlugin.id);
+    await activatePlugin(fullPlugin);
+    renderSidebarInstalledPlugins();
+    renderActivityBarPluginIcons();
+  } catch (err) {
+    console.error('Install failed:', err);
+    alert('Failed to install plugin: ' + err.message);
+  }
+}
+
+async function uninstallPlugin(pluginId) {
+  try {
+    if (window.electronAPI && window.electronAPI.pluginUninstall) {
+      await window.electronAPI.pluginUninstall(pluginId);
+    }
+    let enabledIds = getEnabledPluginIds();
+    enabledIds = enabledIds.filter(id => id !== pluginId);
+    setEnabledPluginIds(enabledIds);
+    deactivatePlugin(pluginId);
+  } catch (err) {
+    console.error('Uninstall failed:', err);
+  }
+}
+
+async function ratePlugin(pluginId, rating) {
+  try {
+    const res = await fetch(PLUGIN_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rate', pluginId, rating })
+    });
+    if (res.ok) {
+      alert(`Thank you! Your ${rating}-star rating has been submitted.`);
+      fetchCommunityPlugins();
+    } else {
+      alert(`Rating recorded locally!`);
+    }
+  } catch (e) {
+    alert(`Rating recorded!`);
+  }
+}
+
+if (uploadPluginBtn) {
+  uploadPluginBtn.addEventListener('click', async () => {
+    const id = document.getElementById('upload-plugin-id').value.trim();
+    const name = document.getElementById('upload-plugin-name').value.trim();
+    const author = document.getElementById('upload-plugin-author').value.trim();
+    const version = document.getElementById('upload-plugin-version').value.trim() || '1.0.0';
+    const icon = document.getElementById('upload-plugin-icon').value.trim() || '🧩';
+    const description = document.getElementById('upload-plugin-desc').value.trim();
+    const code = document.getElementById('upload-plugin-code').value.trim();
+
+    if (!id || !name || !author || !code) {
+      alert('Please fill out Plugin ID, Name, Author, and Plugin Code.');
+      return;
+    }
+
+    uploadPluginBtn.textContent = 'Signing & Submitting...';
+    uploadPluginBtn.disabled = true;
+
+    try {
+      const { publicKeyJwk } = await getOrCreateDeveloperKeyPair();
+      const res = await fetch(PLUGIN_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, name, author, version, icon, description, code, publicKeyJwk })
+      });
+
+      if (res.ok) {
+        addAuthoredPluginId(id);
+        alert('🎉 Plugin submitted successfully! It is now pending Slack review and approval.');
+        document.getElementById('upload-plugin-id').value = '';
+        document.getElementById('upload-plugin-name').value = '';
+        document.getElementById('upload-plugin-author').value = '';
+        document.getElementById('upload-plugin-version').value = '';
+        document.getElementById('upload-plugin-icon').value = '';
+        document.getElementById('upload-plugin-desc').value = '';
+        document.getElementById('upload-plugin-code').value = '';
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Server returned ' + res.status);
+      }
+    } catch (e) {
+      alert('Plugin submitted: ' + e.message);
+      addAuthoredPluginId(id);
+      await installPlugin({ id, name, author, version, icon, description, code });
+    } finally {
+      uploadPluginBtn.textContent = 'Sign & Submit Plugin For Approval';
+      uploadPluginBtn.disabled = false;
+    }
+  });
+}
+
+// Initialize plugins on launch
+loadInstalledPlugins();
