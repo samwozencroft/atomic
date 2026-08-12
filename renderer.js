@@ -214,7 +214,10 @@ async function saveCurrentFile() {
     
     isSaving = true;
     const content = activeEd.getValue();
-    const success = await window.electronAPI.writeFile(activePath, content);
+    const provider = getFileProviderForPath(activePath);
+    const success = provider && typeof provider.write === 'function'
+        ? await Promise.resolve(provider.write(activePath, content, { workspace: currentWorkspace })).then(result => result !== false)
+        : await window.electronAPI.writeFile(activePath, content);
     
     if (success) {
         modifiedFiles.delete(activePath);
@@ -409,6 +412,19 @@ let contextTarget = null;
 
 function showContextMenu(x, y, targetPath, isDir) {
     contextTarget = { path: targetPath, isDirectory: isDir };
+    contextMenu.querySelectorAll('.plugin-context-menu-item').forEach(item => item.remove());
+    for (const item of pluginContextMenuItems.values()) {
+        if (typeof item.when === 'function' && !item.when(contextTarget)) continue;
+        const menuItem = document.createElement('div');
+        menuItem.className = 'context-menu-item plugin-context-menu-item';
+        menuItem.textContent = item.label;
+        menuItem.addEventListener('click', (event) => {
+            event.stopPropagation();
+            contextMenu.classList.remove('active');
+            Promise.resolve(item.onClick({ ...contextTarget })).catch(error => console.error(`Plugin context menu ${item.id} failed:`, error));
+        });
+        contextMenu.appendChild(menuItem);
+    }
     contextMenu.style.left = `${x}px`;
     contextMenu.style.top = `${y}px`;
     contextMenu.classList.add('active');
@@ -588,7 +604,10 @@ async function openFile(filePath, filename, pane = null) {
         else pane = 'left'; // Always default to left pane for new files
     }
 
-    const content = await window.electronAPI.readFile(filePath);
+    const provider = getFileProviderForPath(filePath);
+    const content = provider && typeof provider.read === 'function'
+        ? await provider.read(filePath, { workspace: currentWorkspace })
+        : await window.electronAPI.readFile(filePath);
     if (content !== null) {
         if (pane === 'left') {
             currentFilePath = filePath;
@@ -2511,7 +2530,7 @@ function toggleTerminal(show) {
     if (!isPtySpawned && window.electronAPI && window.electronAPI.terminalSpawnPty) {
       const cols = xtermInstance ? xtermInstance.cols : 80;
       const rows = xtermInstance ? xtermInstance.rows : 24;
-      const targetCwd = (typeof currentFolderPath !== 'undefined' && currentFolderPath) || '';
+      const targetCwd = terminalCwd || currentWorkspace || '';
       window.electronAPI.terminalSpawnPty({ cols, rows, cwd: targetCwd });
       isPtySpawned = true;
     }
@@ -2612,6 +2631,122 @@ const PLUGIN_WEBHOOK_URL = 'https://us-central1-atomic-500709.cloudfunctions.net
 
 let activePluginsMap = new Map(); // id -> { manifest, context, instance, viewRenderer }
 let cachedCommunityPlugins = [];
+const pluginCommands = new Map();
+const pluginContextMenuItems = new Map();
+const pluginFileProviders = new Map();
+const pluginTabs = new Map();
+let pluginTabSequence = 0;
+
+function disposable(cleanup) {
+  let disposed = false;
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      cleanup();
+    }
+  };
+}
+
+function trackPluginDisposable(pluginId, item) {
+  const entry = activePluginsMap.get(pluginId);
+  if (entry && entry.disposables) entry.disposables.add(item);
+  return item;
+}
+
+function showPluginNotification(message, options = {}) {
+  const host = document.getElementById('plugin-notifications');
+  if (!host) return disposable(() => {});
+  const toast = document.createElement('div');
+  toast.className = `plugin-notification ${options.type || 'info'}`;
+  toast.textContent = message;
+  if (options.title) toast.textContent = `${options.title}: ${message}`;
+  host.appendChild(toast);
+  const timeout = setTimeout(() => toast.remove(), Math.max(1000, options.duration || 5000));
+  return disposable(() => {
+    clearTimeout(timeout);
+    toast.remove();
+  });
+}
+
+function normalizeKeybinding(binding) {
+  return String(binding || '').toLowerCase().replace(/\s+/g, '').split('+');
+}
+
+function matchesKeybinding(event, binding) {
+  const parts = normalizeKeybinding(binding);
+  if (!parts.length) return false;
+  const key = parts[parts.length - 1];
+  const modifier = (name, actual) => parts.includes(name) === actual;
+  const usesMeta = parts.includes('cmd') || parts.includes('command') || parts.includes('meta');
+  const usesCmdOrCtrl = parts.includes('cmdorctrl') || parts.includes('commandorcontrol');
+  const primary = usesMeta || usesCmdOrCtrl || parts.includes('ctrl') || parts.includes('control');
+  const primaryPressed = usesCmdOrCtrl
+    ? (navigator.platform.toLowerCase().includes('mac') ? event.metaKey : event.ctrlKey)
+    : usesMeta ? event.metaKey : event.ctrlKey;
+  return event.key.toLowerCase() === key
+    && primaryPressed === primary
+    && modifier('shift', event.shiftKey)
+    && modifier('alt', event.altKey);
+}
+
+document.addEventListener('keydown', (event) => {
+  for (const command of pluginCommands.values()) {
+    if (command.keybinding && matchesKeybinding(event, command.keybinding)) {
+      event.preventDefault();
+      Promise.resolve(command.handler()).catch(error => console.error(`Plugin command ${command.id} failed:`, error));
+      break;
+    }
+  }
+});
+
+async function executePluginCommand(id, ...args) {
+  const command = pluginCommands.get(id);
+  if (!command) throw new Error(`Unknown command: ${id}`);
+  return await command.handler(...args);
+}
+
+const pluginTabHost = document.getElementById('plugin-tab-host');
+const pluginTabBar = document.getElementById('plugin-tab-bar');
+const pluginTabBody = document.getElementById('plugin-tab-body');
+
+function renderPluginTabs(activeId = null) {
+  if (!pluginTabBar || !pluginTabBody) return;
+  pluginTabBar.innerHTML = '';
+  const tabs = [...pluginTabs.values()];
+  if (!tabs.length) {
+    pluginTabHost?.classList.add('hidden');
+    document.getElementById('editor-wrapper')?.classList.remove('hidden');
+    if (!currentFilePath && !currentFilePathRight) document.getElementById('welcome-screen')?.classList.add('active');
+    return;
+  }
+
+  pluginTabHost?.classList.remove('hidden');
+  document.getElementById('editor-wrapper')?.classList.add('hidden');
+  document.getElementById('welcome-screen')?.classList.remove('active');
+  const selected = activeId || tabs.find(tab => tab.active)?.id || tabs[0].id;
+  tabs.forEach(tab => { tab.active = tab.id === selected; });
+  tabs.forEach(tab => {
+    const button = document.createElement('button');
+    button.className = `plugin-tab-button${tab.active ? ' active' : ''}`;
+    button.textContent = `${tab.icon ? `${tab.icon} ` : ''}${tab.title}`;
+    button.title = tab.title;
+    button.addEventListener('click', () => renderPluginTabs(tab.id));
+    pluginTabBar.appendChild(button);
+  });
+
+  pluginTabBody.innerHTML = '';
+  const activeTab = pluginTabs.get(selected);
+  if (activeTab) {
+    try { activeTab.render(pluginTabBody); }
+    catch (error) { pluginTabBody.textContent = `Plugin tab error: ${error.message}`; }
+  }
+}
+
+function getFileProviderForPath(filePath) {
+  const match = String(filePath || '').match(/^([a-z][a-z0-9+.-]*):\/\//i);
+  return match ? pluginFileProviders.get(match[1].toLowerCase()) : null;
+}
 
 // Activity Bar Elements
 const activityPluginIcons = document.getElementById('activity-plugin-icons');
@@ -2666,28 +2801,202 @@ if (closePluginViewBtn) {
 
 // Plugin Runtime Context Factory
 function createPluginContext(manifest) {
+  const pluginId = manifest.id;
+  const settingsKey = `atomic_plugin_settings_${pluginId}`;
+  const entryForPlugin = () => activePluginsMap.get(pluginId);
+  const track = (item) => trackPluginDisposable(pluginId, item);
+
+  const commands = {
+    register: ({ id, title, keybinding, handler }) => {
+      if (!id || typeof handler !== 'function') throw new Error('A command requires an id and handler');
+      const commandId = `${pluginId}.${id}`;
+      pluginCommands.set(commandId, { id: commandId, title: title || id, keybinding, handler });
+      return track(disposable(() => pluginCommands.delete(commandId)));
+    },
+    execute: (id, ...args) => executePluginCommand(id.includes('.') ? id : `${pluginId}.${id}`, ...args)
+  };
+
+  const statusBar = {
+    addItem: ({ text = '', tooltip = '', alignment = 'left', priority = 0, onClick } = {}) => {
+      const host = document.getElementById(alignment === 'right' ? 'plugin-status-right' : 'plugin-status-left');
+      if (!host) return disposable(() => {});
+      const item = document.createElement('span');
+      item.className = 'plugin-status-item';
+      item.textContent = text;
+      item.title = tooltip;
+      item.dataset.priority = String(priority);
+      if (typeof onClick === 'function') item.addEventListener('click', () => onClick());
+      host.appendChild(item);
+      [...host.children].sort((a, b) => Number(b.dataset.priority || 0) - Number(a.dataset.priority || 0)).forEach(child => host.appendChild(child));
+      return track(disposable(() => item.remove()));
+    }
+  };
+
+  const menus = {
+    addContextMenuItem: ({ id, label, when, onClick }) => {
+      if (!id || !label || typeof onClick !== 'function') throw new Error('A context menu item requires id, label, and onClick');
+      const menuId = `${pluginId}.${id}`;
+      pluginContextMenuItems.set(menuId, { id: menuId, label, when, onClick });
+      return track(disposable(() => pluginContextMenuItems.delete(menuId)));
+    }
+  };
+
+  const editorApi = {
+    getActive: () => (activeEditorPane === 'left' ? editor : editorRight),
+    addDecorations: ({ editor: targetEditor, decorations = [] } = {}) => {
+      const target = targetEditor || editorApi.getActive();
+      if (!target || typeof target.deltaDecorations !== 'function') return { set: () => {}, dispose: () => {} };
+      let ids = target.deltaDecorations([], decorations);
+      const handle = {
+        set(nextDecorations = []) { ids = target.deltaDecorations(ids, nextDecorations); },
+        dispose() { ids = target.deltaDecorations(ids, []); }
+      };
+      return track(handle);
+    }
+  };
+
+  const files = {
+    registerProvider: (scheme, provider) => {
+      if (!scheme || !provider || typeof provider.read !== 'function') throw new Error('A file provider requires a scheme and read function');
+      const normalizedScheme = scheme.replace(/:$/, '').toLowerCase();
+      pluginFileProviders.set(normalizedScheme, { ...provider, pluginId });
+      return track(disposable(() => pluginFileProviders.delete(normalizedScheme)));
+    },
+    read: async (filePath) => {
+      const provider = getFileProviderForPath(filePath);
+      return provider && provider.pluginId === pluginId
+        ? provider.read(filePath, { workspace: currentWorkspace })
+        : window.electronAPI.readFile(filePath);
+    },
+    write: async (filePath, content) => {
+      const provider = getFileProviderForPath(filePath);
+      if (provider && provider.pluginId === pluginId && typeof provider.write === 'function') return provider.write(filePath, content, { workspace: currentWorkspace });
+      return window.electronAPI.writeFile(filePath, content);
+    }
+  };
+
+  const settings = {
+    getAll: () => {
+      try { return JSON.parse(localStorage.getItem(settingsKey) || '{}'); } catch (e) { return {}; }
+    },
+    get: (key, fallback = undefined) => {
+      const values = settings.getAll();
+      return Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback;
+    },
+    set: (key, value) => {
+      const values = settings.getAll();
+      values[key] = value;
+      localStorage.setItem(settingsKey, JSON.stringify(values));
+      return value;
+    },
+    delete: (key) => {
+      const values = settings.getAll();
+      delete values[key];
+      localStorage.setItem(settingsKey, JSON.stringify(values));
+    }
+  };
+
+  const secrets = {
+    get: (key) => window.electronAPI.pluginGetSecret({ pluginId, key }),
+    set: (key, value) => window.electronAPI.pluginSetSecret({ pluginId, key, value }),
+    delete: (key) => window.electronAPI.pluginDeleteSecret({ pluginId, key })
+  };
+
+  const tabs = {
+    add: ({ title, icon, render }) => {
+      if (!title || typeof render !== 'function') throw new Error('A custom tab requires title and render function');
+      const tab = { id: `${pluginId}.tab.${++pluginTabSequence}`, pluginId, title, icon, render, active: false };
+      pluginTabs.set(tab.id, tab);
+      const handle = {
+        id: tab.id,
+        open: () => renderPluginTabs(tab.id),
+        dispose: () => {
+          pluginTabs.delete(tab.id);
+          if (pluginTabs.size) renderPluginTabs(); else renderPluginTabs(null);
+        }
+      };
+      const tracked = track(handle);
+      if (!pluginTabs.values().next().value.active) tab.active = true;
+      renderPluginTabs(tab.id);
+      return tracked;
+    },
+    createWebview: ({ title, icon, url }) => {
+      let parsed;
+      try { parsed = new URL(url); } catch (e) { throw new Error('Webview URL must be valid'); }
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Webviews only support http(s) URLs');
+      return tabs.add({
+        title,
+        icon,
+        render: (container) => {
+          const frame = document.createElement('iframe');
+          frame.src = parsed.href;
+          frame.title = title || 'Plugin webview';
+          frame.setAttribute('sandbox', 'allow-forms allow-modals allow-popups allow-scripts');
+          container.appendChild(frame);
+        }
+      });
+    }
+  };
+
+  const terminal = {
+    create: ({ name = 'Plugin Terminal', cwd = currentWorkspace } = {}) => ({
+      name,
+      show: () => {
+        terminalCwd = cwd || currentWorkspace || '';
+        terminalShellName.textContent = name;
+        toggleTerminal(true);
+      },
+      write: (data) => window.electronAPI.terminalWritePty(data),
+      clear: () => xtermInstance?.clear(),
+      dispose: () => {}
+    })
+  };
+
   return {
     manifest,
-    getEditor: () => (activeEditorPane === 'left' ? editor : editorRight),
+    getEditor: editorApi.getActive,
     getWorkspace: () => currentWorkspace,
     openFile: (path, name) => openFile(path, name),
     addSidebarView: ({ title, render }) => {
-      const entry = activePluginsMap.get(manifest.id);
+      const entry = entryForPlugin();
       if (entry) {
         entry.viewTitle = title;
         entry.viewRenderer = render;
       }
+      return track(disposable(() => {
+        if (entry) { entry.viewTitle = manifest.name; entry.viewRenderer = null; }
+      }));
     },
     addActivityBarIcon: ({ icon, title, onClick }) => {
       renderActivityBarPluginIcons();
-    }
+      return track(disposable(() => renderActivityBarPluginIcons()));
+    },
+    commands,
+    statusBar,
+    menus,
+    editor: editorApi,
+    notifications: { show: showPluginNotification },
+    terminal,
+    files,
+    settings,
+    secrets,
+    tabs,
+    addCommand: commands.register,
+    addStatusBarItem: statusBar.addItem,
+    addContextMenuItem: menus.addContextMenuItem,
+    addEditorDecorations: editorApi.addDecorations,
+    createTerminal: terminal.create,
+    registerFileProvider: files.registerProvider,
+    addTab: tabs.add,
+    createWebview: tabs.createWebview,
+    notify: showPluginNotification
   };
 }
 
 async function activatePlugin(manifest) {
   try {
     const context = createPluginContext(manifest);
-    const entry = { manifest, context, viewTitle: manifest.name, viewRenderer: null };
+    const entry = { manifest, context, viewTitle: manifest.name, viewRenderer: null, disposables: new Set() };
     activePluginsMap.set(manifest.id, entry);
 
     if (manifest.code) {
@@ -2714,6 +3023,12 @@ function deactivatePlugin(pluginId) {
   if (entry) {
     if (entry.instance && typeof entry.instance.onDeactivate === 'function') {
       try { entry.instance.onDeactivate(); } catch (e) {}
+    }
+    if (entry.disposables) {
+      [...entry.disposables].reverse().forEach(item => {
+        try { item.dispose(); } catch (e) {}
+      });
+      entry.disposables.clear();
     }
     activePluginsMap.delete(pluginId);
     renderActivityBarPluginIcons();

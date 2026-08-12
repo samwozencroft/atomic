@@ -65,5 +65,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pluginGetDir: () => ipcRenderer.invoke('plugin:getDir'),
   pluginGetInstalled: () => ipcRenderer.invoke('plugin:getInstalled'),
   pluginInstall: (payload) => ipcRenderer.invoke('plugin:install', payload),
-  pluginUninstall: (pluginId) => ipcRenderer.invoke('plugin:uninstall', pluginId)
+  pluginUninstall: (pluginId) => ipcRenderer.invoke('plugin:uninstall', pluginId),
+  pluginGetSecret: (payload) => ipcRenderer.invoke('plugin:getSecret', payload),
+  pluginSetSecret: (payload) => ipcRenderer.invoke('plugin:setSecret', payload),
+  pluginDeleteSecret: (payload) => ipcRenderer.invoke('plugin:deleteSecret', payload)
 });

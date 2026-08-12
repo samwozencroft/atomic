@@ -91,6 +91,47 @@ exports.onDeactivate = function() {
 };
 ```
 
+### 1.1 Host APIs
+
+Plugins receive a namespaced `context` API for integrating with the editor and workbench:
+
+```javascript
+exports.onActivate = function(context) {
+  const command = context.commands.register({
+    id: 'format',
+    title: 'Format Current File',
+    keybinding: 'CmdOrCtrl+Shift+F',
+    handler: () => context.notify('Formatting requested')
+  });
+
+  context.statusBar.addItem({ text: 'Cloud: ready', alignment: 'right' });
+  context.menus.addContextMenuItem({
+    id: 'inspect',
+    label: 'Inspect with Cloud Tool',
+    onClick: ({ path }) => context.openFile(path, path.split('/').pop())
+  });
+
+  context.editor.addDecorations({
+    decorations: [{
+      range: new monaco.Range(1, 1, 1, 1),
+      options: { isWholeLine: true, className: 'plugin-highlight' }
+    }]
+  });
+
+  context.settings.set('region', 'eu-west-1');
+  context.secrets.set('apiToken', 'token-value');
+
+  context.tabs.add({
+    title: 'Cloud Resources',
+    render: (container) => { container.textContent = 'Resources'; }
+  });
+};
+```
+
+The available API groups are `commands`, `statusBar`, `menus`, `editor`, `notifications`, `terminal`, `files`, `settings`, `secrets`, and `tabs`. The shorter aliases `addCommand`, `addStatusBarItem`, `addContextMenuItem`, `addEditorDecorations`, `createTerminal`, `registerFileProvider`, `addTab`, `createWebview`, and `notify` are also available. Registrations return disposable handles and are cleaned up when a plugin is disabled. Secrets are encrypted through the operating system credential store; they are not written to the plugin manifest or renderer storage.
+
+File providers can register virtual URI schemes such as `cloud://bucket/file.txt` with `context.files.registerProvider('cloud', { read, write })`. `context.tabs.createWebview({ title, url })` supports remote HTTP(S) pages in a sandboxed custom tab.
+
 ### 2. Publishing a Plugin
 1. Open Atomic and navigate to **Preferences** (⚙️) &rarr; **Community Plugins**.
 2. Switch to the **Submit New Plugin** tab.

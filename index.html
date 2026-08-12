@@ -90,6 +90,10 @@
                     </div>
                     <div class="welcome-version" id="app-version-display"></div>
                 </div>
+                <div id="plugin-tab-host" class="plugin-tab-host hidden">
+                    <div id="plugin-tab-bar" class="plugin-tab-bar"></div>
+                    <div id="plugin-tab-body" class="plugin-tab-body"></div>
+                </div>
             </div>
             <div id="terminal-resizer" class="resizer-y hidden"></div>
             <div id="terminal-panel" class="terminal-panel hidden">
@@ -121,6 +125,8 @@
         </div>
     </div>
 
+    <div id="plugin-notifications" class="plugin-notifications" aria-live="polite"></div>
+
     <!-- Status Bar -->
     <div id="status-bar">
       <div id="status-left">
@@ -135,8 +141,10 @@
           </svg>
           <span id="git-status-text">Git</span>
         </div>
+        <div id="plugin-status-left" class="plugin-status-group"></div>
       </div>
       <div id="status-right" style="display: flex; align-items: center;">
+        <div id="plugin-status-right" class="plugin-status-group"></div>
         <div id="editor-stats" style="display: none; margin-right: 15px; font-variant-numeric: tabular-nums;">
           <span id="cursor-stat">Ln 1, Col 1</span>
           <span id="lines-stat" style="margin-left: 10px;">0 Lines</span>

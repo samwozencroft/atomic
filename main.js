@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme, safeStorage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
@@ -1078,6 +1078,58 @@ ipcMain.handle('plugin:uninstall', async (event, pluginId) => {
   }
 });
 
+// Plugin secrets are encrypted with the OS credential store. Values never
+// need to be exposed through the plugin manifest or persisted in the renderer.
+const pluginSecretsPath = () => path.join(app.getPath('userData'), 'plugin-secrets.json');
+
+async function readPluginSecrets() {
+  try {
+    return JSON.parse(await fs.readFile(pluginSecretsPath(), 'utf-8')) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+async function writePluginSecrets(secrets) {
+  await fs.writeFile(pluginSecretsPath(), JSON.stringify(secrets, null, 2), 'utf-8');
+}
+
+function validatePluginSecretPayload(payload) {
+  return payload && typeof payload.pluginId === 'string' && /^[a-zA-Z0-9._-]+$/.test(payload.pluginId)
+    && typeof payload.key === 'string' && payload.key.length > 0 && payload.key.length < 200;
+}
+
+ipcMain.handle('plugin:getSecret', async (event, payload) => {
+  if (!validatePluginSecretPayload(payload)) return null;
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  const secrets = await readPluginSecrets();
+  const encrypted = secrets[`${payload.pluginId}:${payload.key}`];
+  if (!encrypted) return null;
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+  } catch (e) {
+    console.error('Failed to decrypt plugin secret:', e);
+    return null;
+  }
+});
+
+ipcMain.handle('plugin:setSecret', async (event, payload) => {
+  if (!validatePluginSecretPayload(payload)) return { success: false, error: 'Invalid secret key' };
+  if (!safeStorage.isEncryptionAvailable()) return { success: false, error: 'OS credential storage is unavailable' };
+  const secrets = await readPluginSecrets();
+  const secretId = `${payload.pluginId}:${payload.key}`;
+  secrets[secretId] = safeStorage.encryptString(String(payload.value ?? '')).toString('base64');
+  await writePluginSecrets(secrets);
+  return { success: true };
+});
+
+ipcMain.handle('plugin:deleteSecret', async (event, payload) => {
+  if (!validatePluginSecretPayload(payload)) return { success: false, error: 'Invalid secret key' };
+  const secrets = await readPluginSecrets();
+  delete secrets[`${payload.pluginId}:${payload.key}`];
+  await writePluginSecrets(secrets);
+  return { success: true };
+});
 
 
 
