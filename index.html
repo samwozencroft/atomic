@@ -127,6 +127,17 @@
 
     <div id="plugin-notifications" class="plugin-notifications" aria-live="polite"></div>
 
+    <div id="command-palette-overlay" class="command-palette-overlay hidden">
+      <div id="command-palette" class="command-palette" role="dialog" aria-label="Command Palette">
+        <div class="command-palette-header">
+          <span>Command Palette</span>
+          <kbd>Esc</kbd>
+        </div>
+        <input id="command-palette-input" class="command-palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type a command...">
+        <div id="command-palette-results" class="command-palette-results" role="listbox"></div>
+      </div>
+    </div>
+
     <!-- Status Bar -->
     <div id="status-bar">
       <div id="status-left">

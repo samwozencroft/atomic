@@ -2260,6 +2260,9 @@ window.electronAPI.onThemeUpdated(() => {
 // Native Menu Listeners
 window.electronAPI.onMenuAction(async (action) => {
   switch (action) {
+    case 'command-palette':
+      openCommandPalette();
+      break;
     case 'open-file':
       const file = await window.electronAPI.openFile();
       if (file) {
@@ -2744,6 +2747,204 @@ async function triggerSearch(query) {
     });
   });
 }
+
+// =============================================================================
+// Command Palette
+// =============================================================================
+const commandPaletteOverlay = document.getElementById('command-palette-overlay');
+const commandPaletteInput = document.getElementById('command-palette-input');
+const commandPaletteResults = document.getElementById('command-palette-results');
+let commandPaletteSelectedIndex = 0;
+let commandPaletteEntries = [];
+
+async function createNewUntitledFile() {
+  const activePath = activeEditorPane === 'left' ? currentFilePath : currentFilePathRight;
+  if (activePath && modifiedFiles.has(activePath)) {
+    const shouldSave = await customConfirm('Save the current file before creating a new file?');
+    if (!shouldSave) return;
+    await saveCurrentFile();
+  }
+
+  const activeEd = activeEditorPane === 'left' ? editor : editorRight;
+  if (!activeEd) return;
+  detachLspModel(activeEd.getModel());
+  if (activeEditorPane === 'left') currentFilePath = null;
+  else currentFilePathRight = null;
+  isSettingValue = true;
+  activeEd.setValue('');
+  isSettingValue = false;
+  document.getElementById('welcome-screen')?.classList.remove('active');
+  document.getElementById('editor-wrapper').style.display = 'flex';
+  if (activeEditorPane === 'left') {
+    document.getElementById('editor-column-left').style.display = 'flex';
+    document.getElementById('editor-container').style.display = 'block';
+  } else {
+    document.getElementById('editor-column-right').style.display = 'flex';
+    document.getElementById('editor-container-right').style.display = 'block';
+  }
+  renderTabs();
+  activeEd.focus();
+}
+
+function searchInCurrentFile() {
+  const activeEd = activeEditorPane === 'left' ? editor : editorRight;
+  const findAction = activeEd?.getAction('actions.find');
+  if (findAction) findAction.run();
+}
+
+function focusWorkspaceSearch() {
+  if (!searchContainer.classList.contains('active')) searchToggleBtn?.click();
+  else searchInput?.focus();
+}
+
+const builtInCommandPaletteEntries = [
+  { id: 'workbench.action.showCommands', label: 'Show All Commands', category: 'Atomic', keybinding: '⌘⇧P', run: () => openCommandPalette() },
+  { id: 'workbench.action.files.newFile', label: 'New File', category: 'File', keybinding: '⌘N', run: createNewUntitledFile },
+  { id: 'workbench.action.findInFiles', label: 'Search Workspace', category: 'Search', run: focusWorkspaceSearch },
+  { id: 'actions.find', label: 'Search in File', category: 'Search', keybinding: '⌘F', run: searchInCurrentFile },
+  { id: 'workbench.action.files.save', label: 'Save File', category: 'File', keybinding: '⌘S', run: saveCurrentFile },
+  { id: 'workbench.action.terminal.toggleTerminal', label: 'Toggle Terminal', category: 'View', run: () => toggleTerminal() },
+  { id: 'workbench.action.files.openFolder', label: 'Open Folder', category: 'File', run: () => document.getElementById('open-folder-btn')?.click() },
+  { id: 'workbench.action.toggleSidebar', label: 'Toggle Sidebar', category: 'View', run: () => document.getElementById('toggle-sidebar-btn')?.click() },
+  { id: 'workbench.action.openSettings', label: 'Open Settings', category: 'View', run: () => settingsCog?.click() },
+  { id: 'workbench.action.git', label: 'Open Git Panel', category: 'Source Control', run: () => document.getElementById('git-btn')?.click() }
+];
+
+function commandPaletteScore(entry, query) {
+  const haystack = `${entry.label} ${entry.category || ''} ${entry.id}`.toLowerCase();
+  const needle = query.trim().toLowerCase();
+  if (!needle) return 0;
+  if (haystack.includes(needle)) return 1000 - haystack.indexOf(needle);
+  let cursor = 0;
+  let score = 0;
+  for (const character of needle) {
+    const index = haystack.indexOf(character, cursor);
+    if (index < 0) return -Infinity;
+    score += index === cursor ? 4 : 1;
+    cursor = index + 1;
+  }
+  return score;
+}
+
+function getCommandPaletteEntries() {
+  const pluginEntries = typeof pluginCommands !== 'undefined'
+    ? [...pluginCommands.values()].map(command => ({
+      id: command.id,
+      label: command.title || command.id,
+      category: 'Plugin',
+      keybinding: command.keybinding,
+      run: () => command.handler()
+    }))
+    : [];
+  return [...builtInCommandPaletteEntries, ...pluginEntries];
+}
+
+function renderCommandPalette() {
+  if (!commandPaletteResults) return;
+  const query = commandPaletteInput?.value || '';
+  commandPaletteEntries = getCommandPaletteEntries()
+    .map(entry => ({ entry, score: commandPaletteScore(entry, query) }))
+    .filter(item => item.score > -Infinity)
+    .sort((a, b) => b.score - a.score || a.entry.label.localeCompare(b.entry.label))
+    .map(item => item.entry);
+  commandPaletteSelectedIndex = Math.min(commandPaletteSelectedIndex, Math.max(0, commandPaletteEntries.length - 1));
+  commandPaletteResults.innerHTML = '';
+
+  if (!commandPaletteEntries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'command-palette-empty';
+    empty.textContent = 'No matching commands';
+    commandPaletteResults.appendChild(empty);
+    return;
+  }
+
+  commandPaletteEntries.forEach((entry, index) => {
+    const item = document.createElement('div');
+    item.className = `command-palette-item${index === commandPaletteSelectedIndex ? ' selected' : ''}`;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', index === commandPaletteSelectedIndex ? 'true' : 'false');
+    const label = document.createElement('span');
+    label.className = 'command-palette-item-label';
+    label.textContent = entry.category ? `${entry.category}: ${entry.label}` : entry.label;
+    item.appendChild(label);
+    if (entry.keybinding) {
+      const key = document.createElement('kbd');
+      key.textContent = entry.keybinding;
+      item.appendChild(key);
+    }
+    item.addEventListener('mouseenter', () => {
+      commandPaletteSelectedIndex = index;
+      renderCommandPalette();
+    });
+    item.addEventListener('click', () => runCommandPaletteEntry(entry));
+    commandPaletteResults.appendChild(item);
+  });
+
+  const selected = commandPaletteResults.children[commandPaletteSelectedIndex];
+  selected?.scrollIntoView({ block: 'nearest' });
+}
+
+function openCommandPalette() {
+  if (!commandPaletteOverlay) return;
+  commandPaletteOverlay.classList.remove('hidden');
+  commandPaletteSelectedIndex = 0;
+  if (commandPaletteInput) commandPaletteInput.value = '';
+  renderCommandPalette();
+  setTimeout(() => commandPaletteInput?.focus(), 0);
+}
+
+function closeCommandPalette() {
+  commandPaletteOverlay?.classList.add('hidden');
+  commandPaletteInput?.blur();
+}
+
+async function runCommandPaletteEntry(entry) {
+  closeCommandPalette();
+  try {
+    await entry.run();
+  } catch (error) {
+    console.error(`Command failed: ${entry.id}`, error);
+    if (typeof showPluginNotification === 'function') showPluginNotification(error.message, { type: 'error', title: 'Command failed' });
+  }
+}
+
+if (commandPaletteInput) {
+  commandPaletteInput.addEventListener('input', () => {
+    commandPaletteSelectedIndex = 0;
+    renderCommandPalette();
+  });
+  commandPaletteInput.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      commandPaletteSelectedIndex = Math.min(commandPaletteSelectedIndex + 1, Math.max(0, commandPaletteEntries.length - 1));
+      renderCommandPalette();
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      commandPaletteSelectedIndex = Math.max(commandPaletteSelectedIndex - 1, 0);
+      renderCommandPalette();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const entry = commandPaletteEntries[commandPaletteSelectedIndex];
+      if (entry) runCommandPaletteEntry(entry);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeCommandPalette();
+    }
+  });
+}
+
+if (commandPaletteOverlay) {
+  commandPaletteOverlay.addEventListener('mousedown', (event) => {
+    if (event.target === commandPaletteOverlay) closeCommandPalette();
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
+    event.preventDefault();
+    openCommandPalette();
+  }
+});
 
 // =============================================================================
 // Bottom Terminal Panel Logic

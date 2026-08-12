@@ -153,6 +153,12 @@ const template = [
     {
       label: 'View',
       submenu: [
+        {
+          label: 'Command Palette...',
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: () => sendMenuAction('command-palette')
+        },
+        { type: 'separator' },
         { role: 'reload' },
         { role: 'forceReload' },
         { role: 'toggleDevTools' },

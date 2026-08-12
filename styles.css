@@ -564,6 +564,109 @@ mark.search-highlight {
 .plugin-notification.warning { border-left-color: #e5c07b; }
 .plugin-notification.error { border-left-color: #e06c75; }
 
+.command-palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 92px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.command-palette {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 140px));
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--menu-bg);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.45);
+}
+
+.command-palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.command-palette-header kbd,
+.command-palette-item kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-muted);
+  background: var(--bg-darkest);
+  font: 10px monospace;
+}
+
+.command-palette-input {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 8px 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  outline: none;
+  color: var(--text-normal);
+  background: var(--bg-darkest);
+  font-size: 14px;
+}
+
+.command-palette-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.command-palette-results {
+  max-height: 405px;
+  overflow-y: auto;
+  padding: 0 5px 5px;
+}
+
+.command-palette-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 4px;
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.command-palette-item:hover,
+.command-palette-item.selected {
+  color: #fff;
+  background: var(--accent-blue);
+}
+
+.command-palette-item.selected kbd,
+.command-palette-item:hover kbd {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.command-palette-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-empty {
+  padding: 18px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .plugin-tab-host {
   flex: 1;
   min-width: 0;
