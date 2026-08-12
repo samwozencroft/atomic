@@ -34,6 +34,9 @@ async function initializeWindow() {
                         const lang = getLanguageFromFilename(state.fileName);
                         monaco.editor.setModelLanguage(editor.getModel(), lang);
                         isSettingValue = false;
+                        attachLspModel(editor.getModel(), state.filePath, lang, rootForFile(state.filePath)).catch(error => {
+                            console.warn('LSP document setup failed:', error.message);
+                        });
                         renderTabs();
                     } else {
                         openFile(state.filePath, state.fileName, 'left');
@@ -48,6 +51,307 @@ initializeWindow();
 
 const modifiedFiles = new Set();
 let isSaving = false;
+
+// ============================================================================
+// Language Server Protocol client
+// ============================================================================
+const LSP_LANGUAGE_IDS = new Set(['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'python', 'go', 'rust', 'shell', 'yaml', 'json']);
+const lspModelStates = new Map();
+const lspUriStates = new Map();
+const lspServerStates = new Map();
+let lspProvidersRegistered = false;
+let lspStatusText = 'idle';
+
+function setLspStatus(text) {
+    lspStatusText = text;
+    const status = document.getElementById('lsp-status');
+    if (status) status.textContent = `LSP: ${text}`;
+}
+
+function lspLanguageId(languageId) {
+    const aliases = { bash: 'shell', shellscript: 'shell', plaintext: null, text: null };
+    return Object.prototype.hasOwnProperty.call(aliases, languageId) ? aliases[languageId] : languageId;
+}
+
+function pathToFileUri(filePath) {
+    const normalized = String(filePath || '').replace(/\\/g, '/');
+    return encodeURI(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`);
+}
+
+function fileUriToPath(uri) {
+    try {
+        const parsed = new URL(uri);
+        if (parsed.protocol !== 'file:') return uri;
+        let filePath = decodeURIComponent(parsed.pathname);
+        if (/^\/[A-Za-z]:/.test(filePath)) filePath = filePath.slice(1);
+        return navigator.platform.toLowerCase().includes('win') ? filePath.replace(/\//g, '\\') : filePath;
+    } catch (e) {
+        return String(uri || '').replace(/^file:\/\//, '');
+    }
+}
+
+function fileNameFromPath(filePath) {
+    return String(filePath || '').split(/[\\/]/).pop() || 'untitled';
+}
+
+function rootForFile(filePath) {
+    if (currentWorkspace) return currentWorkspace;
+    const normalized = String(filePath || '').replace(/\\/g, '/');
+    return normalized.slice(0, normalized.lastIndexOf('/')) || normalized;
+}
+
+function lspPosition(position) {
+    return { line: Math.max(0, position.lineNumber - 1), character: Math.max(0, position.column - 1) };
+}
+
+function monacoPosition(position) {
+    return { lineNumber: position.line + 1, column: position.character + 1 };
+}
+
+function monacoRange(range) {
+    if (!range) return undefined;
+    return new monaco.Range(
+        range.start.line + 1,
+        range.start.character + 1,
+        range.end.line + 1,
+        range.end.character + 1
+    );
+}
+
+function lspTextDocument(state) {
+    return { uri: state.uri, languageId: state.documentLanguageId, version: state.version, text: state.model.getValue() };
+}
+
+async function lspRequestForModel(model, method, params) {
+    const state = lspModelStates.get(model.id);
+    if (!state || !state.sessionId || !state.opened) return null;
+    try {
+        return await window.electronAPI.lspRequest({ sessionId: state.sessionId, method, params });
+    } catch (error) {
+        console.warn(`LSP ${method} failed:`, error.message);
+        return null;
+    }
+}
+
+async function attachLspModel(model, filePath, languageId, rootPath) {
+    detachLspModel(model);
+    const serverLanguage = lspLanguageId(languageId);
+    if (!model || !filePath || !LSP_LANGUAGE_IDS.has(serverLanguage)) return;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(String(filePath))) return;
+
+    const state = {
+        model,
+        filePath,
+        uri: pathToFileUri(filePath),
+        languageId: serverLanguage,
+        documentLanguageId: serverLanguage === 'shell' ? 'shellscript' : serverLanguage,
+        rootPath: rootPath || rootForFile(filePath),
+        version: 1,
+        sessionId: null,
+        opened: false,
+        disposed: false,
+        changeDisposable: null
+    };
+    lspModelStates.set(model.id, state);
+    lspUriStates.set(state.uri, state);
+    state.changeDisposable = model.onDidChangeContent(() => {
+        if (state.disposed || !state.opened || !state.sessionId) return;
+        state.version += 1;
+        window.electronAPI.lspNotify({
+            sessionId: state.sessionId,
+            method: 'textDocument/didChange',
+            params: {
+                textDocument: { uri: state.uri, version: state.version },
+                contentChanges: [{ text: state.model.getValue() }]
+            }
+        }).catch(() => {});
+    });
+
+    setLspStatus(`starting ${serverLanguage}`);
+    const result = await window.electronAPI.lspStart({ languageId: serverLanguage, rootPath: state.rootPath });
+    if (state.disposed || lspModelStates.get(model.id) !== state) return;
+    if (!result || !result.success) {
+        setLspStatus(`${serverLanguage} unavailable`);
+        detachLspModel(model);
+        return;
+    }
+    state.sessionId = result.sessionId;
+    lspServerStates.set(result.sessionId, { languageId: serverLanguage, label: result.server });
+    await window.electronAPI.lspNotify({
+        sessionId: state.sessionId,
+        method: 'textDocument/didOpen',
+        params: { textDocument: lspTextDocument(state) }
+    });
+    if (state.disposed || lspModelStates.get(model.id) !== state) return;
+    state.opened = true;
+    setLspStatus(result.server || serverLanguage);
+}
+
+function detachLspModel(model) {
+    const state = model && lspModelStates.get(model.id);
+    if (!state) return;
+    state.disposed = true;
+    if (state.changeDisposable) state.changeDisposable.dispose();
+    if (state.opened && state.sessionId) {
+        window.electronAPI.lspNotify({
+            sessionId: state.sessionId,
+            method: 'textDocument/didClose',
+            params: { textDocument: { uri: state.uri } }
+        }).catch(() => {});
+    }
+    lspModelStates.delete(model.id);
+    if (lspUriStates.get(state.uri) === state) lspUriStates.delete(state.uri);
+    monaco.editor.setModelMarkers(model, `lsp:${state.languageId}`, []);
+}
+
+function handleLspNotification(notification) {
+    if (!notification) return;
+    const { method, params } = notification;
+    if (method === 'textDocument/publishDiagnostics') {
+        const state = lspUriStates.get(params?.uri);
+        if (!state) return;
+        const severityMap = {
+            1: monaco.MarkerSeverity.Error,
+            2: monaco.MarkerSeverity.Warning,
+            3: monaco.MarkerSeverity.Info,
+            4: monaco.MarkerSeverity.Hint
+        };
+        const markers = (params.diagnostics || []).map(diagnostic => ({
+            severity: severityMap[diagnostic.severity] || monaco.MarkerSeverity.Info,
+            message: diagnostic.message || '',
+            startLineNumber: (diagnostic.range?.start?.line || 0) + 1,
+            startColumn: (diagnostic.range?.start?.character || 0) + 1,
+            endLineNumber: (diagnostic.range?.end?.line || 0) + 1,
+            endColumn: (diagnostic.range?.end?.character || 0) + 1,
+            source: diagnostic.source || 'LSP',
+            code: diagnostic.code ? String(diagnostic.code) : undefined
+        }));
+        monaco.editor.setModelMarkers(state.model, `lsp:${state.languageId}`, markers);
+    } else if (method === 'atomic/serverError') {
+        setLspStatus(params?.message || 'error');
+    } else if (method === 'atomic/serverExit') {
+        setLspStatus('stopped');
+    } else if (method === 'window/logMessage' && params?.message) {
+        console.info(`[LSP] ${params.message}`);
+    }
+}
+
+function lspLocation(location) {
+    const targetUri = location?.targetUri || location?.uri;
+    const targetRange = location?.targetSelectionRange || location?.targetRange || location?.range;
+    if (!targetUri || !targetRange) return null;
+    return { uri: monaco.Uri.parse(targetUri), range: monacoRange(targetRange) };
+}
+
+function lspLocations(value) {
+    const locations = Array.isArray(value) ? value : (value ? [value] : []);
+    return locations.map(lspLocation).filter(Boolean);
+}
+
+function lspMarkup(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return value.map(lspMarkup).filter(Boolean).join('\n\n');
+    if (value.language && value.value !== undefined) return '```' + value.language + '\n' + value.value + '\n```';
+    if (value.value !== undefined) return String(value.value);
+    return String(value);
+}
+
+function registerLspProviders() {
+    if (lspProvidersRegistered) return;
+    lspProvidersRegistered = true;
+    const languages = [...LSP_LANGUAGE_IDS];
+    languages.forEach(language => {
+        monaco.languages.registerCompletionItemProvider(language, {
+            triggerCharacters: ['.', ':', '/', '<', '"', "'"],
+            provideCompletionItems: async (model, position) => {
+                const result = await lspRequestForModel(model, 'textDocument/completion', {
+                    textDocument: { uri: lspModelStates.get(model.id)?.uri },
+                    position: lspPosition(position),
+                    context: { triggerKind: 1 }
+                });
+                const items = Array.isArray(result) ? result : (result?.items || []);
+                const word = model.getWordUntilPosition(position);
+                const fallbackRange = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, position.column);
+                return {
+                    incomplete: Boolean(result?.isIncomplete),
+                    suggestions: items.map(item => {
+                        const edit = item.textEdit?.newText !== undefined ? item.textEdit : null;
+                        const insertText = edit?.newText || item.insertText || item.label;
+                        return {
+                            label: item.label,
+                            kind: item.kind || monaco.languages.CompletionItemKind.Text,
+                            detail: item.detail,
+                            documentation: item.documentation ? lspMarkup(item.documentation) : undefined,
+                            insertText,
+                            insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                            filterText: item.filterText,
+                            sortText: item.sortText,
+                            range: edit?.range ? monacoRange(edit.range) : fallbackRange
+                        };
+                    })
+                };
+            }
+        });
+
+        monaco.languages.registerHoverProvider(language, {
+            provideHover: async (model, position) => {
+                const result = await lspRequestForModel(model, 'textDocument/hover', {
+                    textDocument: { uri: lspModelStates.get(model.id)?.uri },
+                    position: lspPosition(position)
+                });
+                if (!result) return null;
+                const contents = Array.isArray(result.contents) ? result.contents : [result.contents];
+                return {
+                    contents: contents.map(content => ({ value: lspMarkup(content) })),
+                    range: monacoRange(result.range)
+                };
+            }
+        });
+
+        monaco.languages.registerDefinitionProvider(language, {
+            provideDefinition: async (model, position) => {
+                const result = await lspRequestForModel(model, 'textDocument/definition', {
+                    textDocument: { uri: lspModelStates.get(model.id)?.uri },
+                    position: lspPosition(position)
+                });
+                return lspLocations(result);
+            }
+        });
+
+        monaco.languages.registerReferenceProvider(language, {
+            provideReferences: async (model, position, context) => {
+                const result = await lspRequestForModel(model, 'textDocument/references', {
+                    textDocument: { uri: lspModelStates.get(model.id)?.uri },
+                    position: lspPosition(position),
+                    context: { includeDeclaration: Boolean(context?.includeDeclaration) }
+                });
+                return lspLocations(result);
+            }
+        });
+    });
+
+    if (typeof monaco.editor.registerEditorOpener === 'function') {
+        monaco.editor.registerEditorOpener({
+            openCodeEditor: async (_source, resource, selection) => {
+                const filePath = fileUriToPath(resource.toString());
+                if (!filePath) return false;
+                await openFile(filePath, fileNameFromPath(filePath), activeEditorPane);
+                const targetEditor = activeEditorPane === 'left' ? editor : editorRight;
+                if (selection && targetEditor) {
+                    targetEditor.setPosition(monacoPosition(selection.start));
+                    targetEditor.revealPositionInCenter(monacoPosition(selection.start));
+                }
+                return true;
+            }
+        });
+    }
+}
+
+function initializeLspClient() {
+    registerLspProviders();
+    if (window.electronAPI?.onLspNotification) window.electronAPI.onLspNotification(handleLspNotification);
+}
 
 require.config({ paths: { 'vs': 'node_modules/monaco-editor/min/vs' }});
 
@@ -182,6 +486,8 @@ editorRight.onDidFocusEditorText(() => {
             }
         }
     });
+
+    initializeLspClient();
 });
 
 async function saveCurrentFile() {
@@ -221,6 +527,21 @@ async function saveCurrentFile() {
     
     if (success) {
         modifiedFiles.delete(activePath);
+
+        const lspState = lspModelStates.get(activeEd.getModel()?.id);
+        if (lspState?.opened && lspState.sessionId) {
+            window.electronAPI.lspNotify({
+                sessionId: lspState.sessionId,
+                method: 'textDocument/didSave',
+                params: { textDocument: { uri: lspState.uri }, text: content }
+            }).catch(() => {});
+        } else if (!lspState) {
+            const filename = fileNameFromPath(activePath);
+            const language = getLanguageFromFilename(filename);
+            attachLspModel(activeEd.getModel(), activePath, language, rootForFile(activePath)).catch(error => {
+                console.warn('LSP document setup failed:', error.message);
+            });
+        }
         
         // Remove .is-modified visual indicator from tree
         if (currentWorkspace) {
@@ -619,6 +940,7 @@ async function openFile(filePath, filename, pane = null) {
             
             if (currentFilePathRight === filePath) {
                 currentFilePathRight = null;
+                detachLspModel(editorRight.getModel());
                 editorRight.setValue('');
                 openTabsRight = openTabsRight.filter(t => t.path !== filePath);
             }
@@ -636,6 +958,7 @@ async function openFile(filePath, filename, pane = null) {
             
             if (currentFilePath === filePath) {
                 currentFilePath = null;
+                detachLspModel(editor.getModel());
                 editor.setValue('');
                 openTabsLeft = openTabsLeft.filter(t => t.path !== filePath);
             }
@@ -651,9 +974,13 @@ async function openFile(filePath, filename, pane = null) {
         const ed = pane === 'left' ? editor : editorRight;
         monaco.editor.setModelLanguage(ed.getModel(), lang);
         
+        detachLspModel(ed.getModel());
         isSettingValue = true;
         ed.setValue(content);
         isSettingValue = false;
+        attachLspModel(ed.getModel(), filePath, lang, rootForFile(filePath)).catch(error => {
+            console.warn('LSP document setup failed:', error.message);
+        });
         
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         const activeTab = document.querySelector(`#tabs-${pane} .tab[data-path="${filePath.replace(/\\/g, '\\\\')}"]`);
@@ -920,12 +1247,14 @@ function closeTab(path, pane) {
         openTabsLeft = openTabsLeft.filter(t => t.path !== path);
         if (currentFilePath === path) {
             currentFilePath = null;
+            detachLspModel(editor.getModel());
             editor.setValue('');
         }
     } else {
         openTabsRight = openTabsRight.filter(t => t.path !== path);
         if (currentFilePathRight === path) {
             currentFilePathRight = null;
+            detachLspModel(editorRight.getModel());
             editorRight.setValue('');
         }
     }

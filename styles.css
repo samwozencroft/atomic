@@ -646,6 +646,11 @@ mark.search-highlight {
   margin-left: 15px;
 }
 
+#lsp-status {
+  opacity: 0.85;
+  cursor: default;
+}
+
 #settings-cog {
   cursor: pointer;
   display: flex;
@@ -1576,4 +1581,3 @@ mark.search-highlight {
   border: 1px solid rgba(152, 195, 121, 0.3);
   font-weight: 500;
 }
-

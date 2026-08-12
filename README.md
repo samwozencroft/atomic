@@ -132,6 +132,34 @@ The available API groups are `commands`, `statusBar`, `menus`, `editor`, `notifi
 
 File providers can register virtual URI schemes such as `cloud://bucket/file.txt` with `context.files.registerProvider('cloud', { read, write })`. `context.tabs.createWebview({ title, url })` supports remote HTTP(S) pages in a sandboxed custom tab.
 
+## Language Server Protocol
+
+Atomic includes an LSP client for diagnostics, autocomplete, hover documentation, go-to-definition, and references. Language servers run as separate stdio processes and are started only when a matching file is opened. If a server is not installed, the normal Monaco editor remains available and the status bar reports that the server is unavailable.
+
+The built-in mappings are:
+
+| Language | Server command |
+| --- | --- |
+| JavaScript / TypeScript | `typescript-language-server --stdio` |
+| Python | `pyright-langserver --stdio` |
+| Go | `gopls serve` |
+| Rust | `rust-analyzer` |
+| Bash | `bash-language-server start` |
+| YAML | `yaml-language-server --stdio` |
+| JSON | `vscode-json-language-server --stdio` |
+
+Install the server you need globally, or install it in the opened workspace. Atomic adds `<workspace>/node_modules/.bin` to the server search path:
+
+```sh
+npm install --save-dev typescript typescript-language-server
+npm install --save-dev bash-language-server yaml-language-server vscode-langservers-extracted
+pip install pyright
+go install golang.org/x/tools/gopls@latest
+rustup component add rust-analyzer
+```
+
+The LSP transport is implemented in Electron’s main process, with Monaco providers registered in the renderer. Documents use full-text synchronization for compatibility across servers, and diagnostics are rendered as native Monaco markers.
+
 ### 2. Publishing a Plugin
 1. Open Atomic and navigate to **Preferences** (⚙️) &rarr; **Community Plugins**.
 2. Switch to the **Submit New Plugin** tab.

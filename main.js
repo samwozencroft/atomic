@@ -3,9 +3,31 @@ const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { execFile, spawn } = require('node:child_process');
+const { fileURLToPath, pathToFileURL } = require('node:url');
 const pty = require('node-pty');
 const util = require('node:util');
 const execFileAsync = util.promisify(execFile);
+
+const LSP_SERVER_CONFIGS = {
+  javascript: { command: 'typescript-language-server', args: ['--stdio'], label: 'TypeScript Language Server' },
+  typescript: { command: 'typescript-language-server', args: ['--stdio'], label: 'TypeScript Language Server' },
+  javascriptreact: { command: 'typescript-language-server', args: ['--stdio'], label: 'TypeScript Language Server' },
+  typescriptreact: { command: 'typescript-language-server', args: ['--stdio'], label: 'TypeScript Language Server' },
+  python: { command: 'pyright-langserver', args: ['--stdio'], label: 'Pyright' },
+  go: { command: 'gopls', args: ['serve'], label: 'gopls' },
+  rust: { command: 'rust-analyzer', args: [], label: 'Rust Analyzer' },
+  shell: { command: 'bash-language-server', args: ['start'], label: 'Bash Language Server' },
+  yaml: { command: 'yaml-language-server', args: ['--stdio'], label: 'YAML Language Server' },
+  json: { command: 'vscode-json-language-server', args: ['--stdio'], label: 'JSON Language Server' }
+};
+
+function pathToLspUri(filePath) {
+  try { return pathToFileURL(filePath).href; } catch (e) { return `file://${filePath}`; }
+}
+
+function uriToLspPath(uri) {
+  try { return fileURLToPath(uri); } catch (e) { return uri; }
+}
 
 
 let mainWindow; // Keep reference to first window for legacy checks if any, though we should try to avoid it
@@ -36,6 +58,7 @@ function createWindow(initialState = null) {
 
   win.on('closed', () => {
     windowStates.delete(win.id);
+    stopLspServersForWindow(win.id);
   });
   
   if (!mainWindow) mainWindow = win;
@@ -1018,6 +1041,258 @@ ipcMain.handle('terminal:killPty', (event) => {
   }
 });
 
+// --- Language Server Protocol bridge ---
+// Language servers run in the main process and communicate over stdio. The
+// renderer only sees validated JSON-RPC requests and server notifications.
+const lspServers = new Map();
+let nextLspServerId = 1;
+
+function lspServerKey(winId, languageId, rootPath) {
+  return `${winId}:${languageId}:${rootPath || process.cwd()}`;
+}
+
+function sendLspEvent(server, method, params) {
+  if (!server.sender || server.sender.isDestroyed()) return;
+  server.sender.send('lsp:notification', { sessionId: server.id, method, params });
+}
+
+function stopLspServer(server) {
+  if (!server) return;
+  for (const pending of server.pending.values()) {
+    clearTimeout(pending.timeout);
+    pending.reject(new Error('Language server stopped'));
+  }
+  server.pending.clear();
+  try { server.process.kill(); } catch (e) {}
+  lspServers.delete(server.key);
+}
+
+function stopLspServersForWindow(winId) {
+  for (const server of [...lspServers.values()]) {
+    if (server.winId === winId) stopLspServer(server);
+  }
+}
+
+function writeLspMessage(server, message) {
+  if (!server.process.stdin || server.process.killed) throw new Error('Language server is not running');
+  const body = JSON.stringify(message);
+  server.process.stdin.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`);
+}
+
+function requestLspServer(server, method, params) {
+  const id = server.nextRequestId++;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      server.pending.delete(id);
+      reject(new Error(`LSP request timed out: ${method}`));
+    }, 30000);
+    server.pending.set(id, { resolve, reject, timeout });
+    try {
+      writeLspMessage(server, { jsonrpc: '2.0', id, method, params });
+    } catch (error) {
+      clearTimeout(timeout);
+      server.pending.delete(id);
+      reject(error);
+    }
+  });
+}
+
+function notifyLspServer(server, method, params) {
+  writeLspMessage(server, { jsonrpc: '2.0', method, params });
+}
+
+function handleLspMessage(server, message) {
+  if (message.id !== undefined && !message.method) {
+    const pending = server.pending.get(message.id);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    server.pending.delete(message.id);
+    if (message.error) pending.reject(new Error(message.error.message || 'LSP server error'));
+    else pending.resolve(message.result);
+    return;
+  }
+
+  if (!message.method) return;
+
+  // A few client requests are required by otherwise standard servers. Answer
+  // them in the main process instead of exposing a second IPC round trip.
+  if (message.id !== undefined) {
+    if (message.method === 'workspace/configuration') {
+      const items = Array.isArray(message.params?.items) ? message.params.items : [];
+      writeLspMessage(server, { jsonrpc: '2.0', id: message.id, result: items.map(() => ({})) });
+      return;
+    }
+    if (message.method === 'workspace/workspaceFolders') {
+      const rootPath = server.rootPath || process.cwd();
+      writeLspMessage(server, {
+        jsonrpc: '2.0',
+        id: message.id,
+        result: [{ uri: pathToLspUri(rootPath), name: path.basename(rootPath) }]
+      });
+      return;
+    }
+    if (message.method === 'client/registerCapability' || message.method === 'window/workDoneProgress/create') {
+      writeLspMessage(server, { jsonrpc: '2.0', id: message.id, result: null });
+      return;
+    }
+    if (message.method === 'workspace/applyEdit') {
+      writeLspMessage(server, { jsonrpc: '2.0', id: message.id, result: { applied: false } });
+      return;
+    }
+  }
+
+  sendLspEvent(server, message.method, message.params);
+}
+
+async function startLspServer(event, languageId, rootPath) {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const winId = win ? win.id : 1;
+  const normalizedLanguageId = String(languageId || '').toLowerCase();
+  const config = LSP_SERVER_CONFIGS[normalizedLanguageId];
+  if (!config) throw new Error(`No language server configured for ${normalizedLanguageId}`);
+
+  const normalizedRoot = rootPath || process.cwd();
+  const key = lspServerKey(winId, normalizedLanguageId, normalizedRoot);
+  const existing = lspServers.get(key);
+  if (existing) {
+    await existing.ready;
+    return existing;
+  }
+
+  const envPath = [
+    process.env.PATH,
+    path.join(normalizedRoot, 'node_modules', '.bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin'
+  ].filter(Boolean).join(path.delimiter);
+  const child = spawn(config.command, config.args, {
+    cwd: normalizedRoot,
+    env: { ...process.env, PATH: envPath },
+    shell: process.platform === 'win32'
+  });
+
+  const server = {
+    id: `lsp-${nextLspServerId++}`,
+    key,
+    winId,
+    sender: event.sender,
+    process: child,
+    languageId: normalizedLanguageId,
+    rootPath: normalizedRoot,
+    config,
+    pending: new Map(),
+    nextRequestId: 1,
+    buffer: Buffer.alloc(0),
+    capabilities: {},
+    ready: null
+  };
+  lspServers.set(key, server);
+
+  let rejectStartup;
+  const startupError = new Promise((resolve, reject) => { rejectStartup = reject; });
+  child.once('error', (error) => {
+    rejectStartup(error);
+    sendLspEvent(server, 'atomic/serverError', { message: `${config.label} unavailable: ${error.message}` });
+    stopLspServer(server);
+  });
+
+  child.stdout.on('data', (chunk) => {
+    server.buffer = Buffer.concat([server.buffer, chunk]);
+    while (true) {
+      const headerEnd = server.buffer.indexOf(Buffer.from('\r\n\r\n'));
+      if (headerEnd < 0) break;
+      const headers = server.buffer.slice(0, headerEnd).toString('ascii');
+      const lengthMatch = headers.match(/Content-Length:\s*(\d+)/i);
+      if (!lengthMatch) {
+        server.buffer = server.buffer.slice(headerEnd + 4);
+        continue;
+      }
+      const contentLength = Number(lengthMatch[1]);
+      const bodyStart = headerEnd + 4;
+      if (server.buffer.length - bodyStart < contentLength) break;
+      const body = server.buffer.subarray(bodyStart, bodyStart + contentLength).toString('utf8');
+      server.buffer = server.buffer.slice(bodyStart + contentLength);
+      try { handleLspMessage(server, JSON.parse(body)); }
+      catch (error) { sendLspEvent(server, 'atomic/protocolError', { message: error.message }); }
+    }
+  });
+
+  child.stderr.on('data', (chunk) => {
+    sendLspEvent(server, 'window/logMessage', { type: 3, message: chunk.toString('utf8').trim() });
+  });
+  child.once('close', (code, signal) => {
+    sendLspEvent(server, 'atomic/serverExit', { code, signal });
+    if (lspServers.get(key) === server) stopLspServer(server);
+  });
+
+  server.ready = Promise.race([
+    (async () => {
+      const result = await requestLspServer(server, 'initialize', {
+        processId: process.pid,
+        clientInfo: { name: 'Atomic', version: app.getVersion() },
+        rootUri: pathToLspUri(normalizedRoot),
+        workspaceFolders: [{ uri: pathToLspUri(normalizedRoot), name: path.basename(normalizedRoot) }],
+        capabilities: {
+          workspace: { configuration: true, workspaceFolders: true },
+          textDocument: {
+            synchronization: { dynamicRegistration: false, willSave: false, didSave: true, willSaveWaitUntil: false },
+            completion: { completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'] } },
+            hover: { contentFormat: ['markdown', 'plaintext'] },
+            definition: { linkSupport: true },
+            references: {}
+          }
+        },
+        initializationOptions: {}
+      });
+      server.capabilities = result?.capabilities || {};
+      notifyLspServer(server, 'initialized', {});
+      return server;
+    })(),
+    startupError.then(error => { throw error; })
+  ]).catch(error => {
+    stopLspServer(server);
+    throw new Error(`${config.label} failed to start: ${error.message}`);
+  });
+
+  await server.ready;
+  return server;
+}
+
+ipcMain.handle('lsp:getServers', () => Object.fromEntries(Object.entries(LSP_SERVER_CONFIGS).map(([languageId, config]) => [languageId, {
+  label: config.label,
+  command: config.command,
+  args: config.args
+}])));
+
+ipcMain.handle('lsp:start', async (event, payload = {}) => {
+  try {
+    const server = await startLspServer(event, payload.languageId, payload.rootPath);
+    return { success: true, sessionId: server.id, capabilities: server.capabilities, server: server.config.label };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('lsp:request', async (event, { sessionId, method, params } = {}) => {
+  const server = [...lspServers.values()].find(item => item.id === sessionId);
+  if (!server) throw new Error('Language server session not found');
+  return requestLspServer(server, method, params);
+});
+
+ipcMain.handle('lsp:notify', (event, { sessionId, method, params } = {}) => {
+  const server = [...lspServers.values()].find(item => item.id === sessionId);
+  if (!server) return false;
+  notifyLspServer(server, method, params);
+  return true;
+});
+
+ipcMain.handle('lsp:stop', (event, { sessionId } = {}) => {
+  const server = [...lspServers.values()].find(item => item.id === sessionId);
+  if (server) stopLspServer(server);
+  return true;
+});
+
 // --- Plugin Management IPC Handlers ---
 async function ensurePluginsDir() {
   const pluginsDir = path.join(app.getPath('userData'), 'plugins');
@@ -1130,7 +1405,3 @@ ipcMain.handle('plugin:deleteSecret', async (event, payload) => {
   await writePluginSecrets(secrets);
   return { success: true };
 });
-
-
-
-

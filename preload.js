@@ -68,5 +68,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pluginUninstall: (pluginId) => ipcRenderer.invoke('plugin:uninstall', pluginId),
   pluginGetSecret: (payload) => ipcRenderer.invoke('plugin:getSecret', payload),
   pluginSetSecret: (payload) => ipcRenderer.invoke('plugin:setSecret', payload),
-  pluginDeleteSecret: (payload) => ipcRenderer.invoke('plugin:deleteSecret', payload)
+  pluginDeleteSecret: (payload) => ipcRenderer.invoke('plugin:deleteSecret', payload),
+  lspGetServers: () => ipcRenderer.invoke('lsp:getServers'),
+  lspStart: (payload) => ipcRenderer.invoke('lsp:start', payload),
+  lspRequest: (payload) => ipcRenderer.invoke('lsp:request', payload),
+  lspNotify: (payload) => ipcRenderer.invoke('lsp:notify', payload),
+  lspStop: (payload) => ipcRenderer.invoke('lsp:stop', payload),
+  onLspNotification: (callback) => ipcRenderer.on('lsp:notification', (_event, notification) => callback(notification))
 });
