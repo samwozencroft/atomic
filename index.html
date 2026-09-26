@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://storage.googleapis.com https://us-central1-atomic-500709.cloudfunctions.net; img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Atomic</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
@@ -86,7 +87,7 @@
                     <h1>Atomic</h1>
                     <p>A lightweight, modern text editor built on Electron 30 and Node 20.</p>
                     <div class="welcome-actions">
-                        <button class="btn" onclick="document.getElementById('open-folder-btn').click()">Open a Folder</button>
+                        <button class="btn" id="welcome-open-folder-btn">Open a Folder</button>
                     </div>
                     <div class="welcome-version" id="app-version-display"></div>
                 </div>
@@ -428,6 +429,7 @@
       </div>
     </div>
 
+    <script src="security-utils.js"></script>
     <script src="renderer.js"></script>
 </body>
 </html>

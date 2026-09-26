@@ -10,6 +10,7 @@ let expandedDirectories = new Set();
 let xtermInstance = null;
 let xtermFitAddon = null;
 let isPtySpawned = false;
+const { escapeHtml } = window.AtomicSecurity;
 
 // Initialize window state if opened via tear-off
 async function initializeWindow() {
@@ -588,6 +589,10 @@ document.getElementById('open-folder-btn').addEventListener('click', async () =>
         currentWorkspace = dirPath;
         loadDirectory(dirPath);
     }
+});
+
+document.getElementById('welcome-open-folder-btn')?.addEventListener('click', () => {
+    document.getElementById('open-folder-btn').click();
 });
 
 async function loadDirectory(dirPath) {
@@ -1171,10 +1176,13 @@ function renderTabs() {
                 }
             });
 
-            el.innerHTML = `
-                <span>${tab.name}</span>
-                <span class="tab-close" style="margin-left: 10px;">×</span>
-            `;
+            const tabName = document.createElement('span');
+            tabName.textContent = tab.name;
+            const closeTabButton = document.createElement('span');
+            closeTabButton.className = 'tab-close';
+            closeTabButton.style.marginLeft = '10px';
+            closeTabButton.textContent = '×';
+            el.append(tabName, closeTabButton);
             
             el.addEventListener('click', () => openFile(tab.path, tab.name, pane));
             
@@ -1553,7 +1561,7 @@ async function renderGitModalContent() {
   }
 
   if (!status.isRepo) {
-    gitModalBody.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">The current workspace folder is not a Git repository.<br><br><span style="font-size: 11px; font-family: monospace; opacity: 0.8;">${currentWorkspace}</span></div>`;
+    gitModalBody.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0;">The current workspace folder is not a Git repository.<br><br><span style="font-size: 11px; font-family: monospace; opacity: 0.8;">${escapeHtml(currentWorkspace)}</span></div>`;
     return;
   }
 
@@ -1592,21 +1600,21 @@ async function renderGitModalContent() {
     const aheadCount = (syncStatus && syncStatus.success) ? syncStatus.ahead : 0;
     const behindCount = (syncStatus && syncStatus.success) ? syncStatus.behind : 0;
 
-    let branchOptions = branches.map(b => `<option value="${b.name}" ${b.current ? 'selected' : ''}>${b.name}</option>`).join('');
+    let branchOptions = branches.map(b => `<option value="${escapeHtml(b.name)}" ${b.current ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('');
     branchOptions += '<option value="__create_new__">+ Create New Branch...</option>';
-    branchOptions += '<option value="__merge_branch__">⚡ Merge Branch into ' + status.branch + '...</option>';
+    branchOptions += '<option value="__merge_branch__">⚡ Merge Branch into ' + escapeHtml(status.branch) + '...</option>';
 
     let filesHtml = status.files.map(file => {
       const isChecked = gitCheckedFiles.has(file.path);
       const displayStatus = file.indexStatus !== ' ' && file.indexStatus !== '?' ? file.indexStatus : (file.workingTreeStatus || 'M');
       return `
-        <div class="git-list-item ${selectedGitFilePath === file.path ? 'selected' : ''}" data-path="${file.path}">
+        <div class="git-list-item ${selectedGitFilePath === file.path ? 'selected' : ''}" data-path="${escapeHtml(file.path)}">
           <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
-            <input type="checkbox" ${isChecked ? 'checked' : ''} class="git-checkbox file-select-checkbox" data-path="${file.path}" style="cursor: pointer;">
-            <span style="font-family: monospace; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;" title="${file.path}">${file.path}</span>
+            <input type="checkbox" ${isChecked ? 'checked' : ''} class="git-checkbox file-select-checkbox" data-path="${escapeHtml(file.path)}" style="cursor: pointer;">
+            <span style="font-family: monospace; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;" title="${escapeHtml(file.path)}">${escapeHtml(file.path)}</span>
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
-            <span class="git-badge-${displayStatus}">${displayStatus}</span>
+            <span class="git-badge-${escapeHtml(displayStatus)}">${escapeHtml(displayStatus)}</span>
           </div>
         </div>
       `;
@@ -1664,7 +1672,7 @@ async function renderGitModalContent() {
 
         <div class="git-diff-column">
           <div style="padding: 6px 12px; background: var(--bg-darker); border-bottom: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
-            <span id="git-diff-header-title">${selectedGitFilePath ? selectedGitFilePath : 'Select a file to view diff'}</span>
+            <span id="git-diff-header-title">${escapeHtml(selectedGitFilePath || 'Select a file to view diff')}</span>
           </div>
           <div id="git-diff-editor-container" style="flex: 1; width: 100%;"></div>
         </div>
@@ -1879,10 +1887,10 @@ async function renderGitModalContent() {
       const itemsHtml = res.commits.map(c => `
         <div class="git-history-item">
           <div>
-            <div style="font-weight: 600; color: var(--text-normal); font-size: 13px; margin-bottom: 2px;">${c.message}</div>
-            <div style="color: var(--text-muted); font-size: 11px;">${c.author} • ${c.date}</div>
+            <div style="font-weight: 600; color: var(--text-normal); font-size: 13px; margin-bottom: 2px;">${escapeHtml(c.message)}</div>
+            <div style="color: var(--text-muted); font-size: 11px;">${escapeHtml(c.author)} • ${escapeHtml(c.date)}</div>
           </div>
-          <span style="font-family: monospace; background: var(--bg-darkest); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-color); color: var(--accent-purple);">${c.hash}</span>
+          <span style="font-family: monospace; background: var(--bg-darkest); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-color); color: var(--accent-purple);">${escapeHtml(c.hash)}</span>
         </div>
       `).join('');
 
@@ -1902,7 +1910,7 @@ async function renderGitModalContent() {
       gitModalBody.innerHTML = `
         <div style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
           <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Branch Visualization Graph</div>
-          <div class="git-graph-view">${res.graph}</div>
+          <div class="git-graph-view">${escapeHtml(res.graph)}</div>
         </div>
       `;
     } else {
@@ -1957,16 +1965,16 @@ async function renderGitModalContent() {
         const c = commits[fl.hash] || { author: 'Unknown', date: 'N/A', summary: 'No commit info' };
         return `
           <div class="git-blame-line">
-            <div class="git-blame-meta">[${fl.hash}] ${c.author} (${c.date}) - ${c.summary}</div>
+            <div class="git-blame-meta">[${escapeHtml(fl.hash)}] ${escapeHtml(c.author)} (${escapeHtml(c.date)}) - ${escapeHtml(c.summary)}</div>
             <div style="color: var(--text-muted); width: 30px; text-align: right; user-select: none;">${idx + 1}</div>
-            <div class="git-blame-content">${fl.text}</div>
+            <div class="git-blame-content">${escapeHtml(fl.text)}</div>
           </div>
         `;
       }).join('');
 
       gitModalBody.innerHTML = `
         <div class="git-blame-view">
-          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Blame Annotation: ${relPath}</div>
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Blame Annotation: ${escapeHtml(relPath)}</div>
           <div class="git-blame-list">
             ${formattedLines}
           </div>
@@ -1982,12 +1990,12 @@ async function renderGitModalContent() {
       const listHtml = res.conflicts.map(file => `
         <div class="git-conflict-item">
           <div>
-            <div style="font-weight: 600; color: #e06c75; font-size: 13px; margin-bottom: 2px;">⚡ ${file}</div>
+            <div style="font-weight: 600; color: #e06c75; font-size: 13px; margin-bottom: 2px;">⚡ ${escapeHtml(file)}</div>
             <div style="color: var(--text-muted); font-size: 11px;">Contains unresolved conflict markers</div>
           </div>
           <div style="display: flex; gap: 8px;">
-            <button class="btn resolve-ours" data-path="${file}" style="background: var(--bg-darkest); color: var(--text-normal); font-size: 11px; padding: 4px 8px; border: 1px solid var(--border-color);">Keep Ours</button>
-            <button class="btn resolve-theirs" data-path="${file}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 8px; border: none;">Keep Theirs</button>
+            <button class="btn resolve-ours" data-path="${escapeHtml(file)}" style="background: var(--bg-darkest); color: var(--text-normal); font-size: 11px; padding: 4px 8px; border: 1px solid var(--border-color);">Keep Ours</button>
+            <button class="btn resolve-theirs" data-path="${escapeHtml(file)}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 8px; border: none;">Keep Theirs</button>
           </div>
         </div>
       `).join('');
@@ -2330,6 +2338,29 @@ const themeSearch = document.getElementById('theme-search');
 const BUCKET_URL = 'https://storage.googleapis.com/atomic-themes/index.json';
 const WEBHOOK_URL = 'https://us-central1-atomic-500709.cloudfunctions.net/themeMarketplaceHandler';
 let cachedThemes = [];
+const ALLOWED_THEME_PROPERTIES = new Set([
+  '--bg-dark', '--bg-darker', '--bg-darkest', '--text-normal', '--text-muted',
+  '--border-color', '--accent-blue', '--accent-purple', '--hover-bg', '--active-bg',
+  '--tab-bg', '--tab-active-bg', '--menu-bg', '--menu-hover'
+]);
+
+function sanitizeMarketplaceThemeCss(cssContent) {
+  const block = String(cssContent || '').match(/\[data-theme=["']custom["']\]\s*\{([^}]*)\}/i);
+  if (!block) throw new Error('Theme does not contain a custom theme variable block');
+
+  const declarations = [];
+  for (const declaration of block[1].split(';')) {
+    const separator = declaration.indexOf(':');
+    if (separator === -1) continue;
+    const property = declaration.slice(0, separator).trim();
+    const value = declaration.slice(separator + 1).trim();
+    if (!ALLOWED_THEME_PROPERTIES.has(property)) continue;
+    if (!value || /url\s*\(|@import|[{}<>]/i.test(value)) continue;
+    declarations.push(`  ${property}: ${value};`);
+  }
+  if (declarations.length === 0) throw new Error('Theme contains no supported color variables');
+  return `[data-theme="custom"] {\n${declarations.join('\n')}\n}`;
+}
 
 if (browseThemesBtn) {
   browseThemesBtn.addEventListener('click', () => {
@@ -2387,10 +2418,13 @@ function renderMarketplaceThemes(themes) {
     
     const info = document.createElement('div');
     info.className = 'theme-list-item-info';
-    info.innerHTML = `
-      <span class="theme-list-item-title">${theme.name}</span>
-      <span class="theme-list-item-author">by ${theme.author}</span>
-    `;
+    const title = document.createElement('span');
+    title.className = 'theme-list-item-title';
+    title.textContent = theme.name;
+    const author = document.createElement('span');
+    author.className = 'theme-list-item-author';
+    author.textContent = `by ${theme.author}`;
+    info.append(title, author);
     
     const applyBtn = document.createElement('button');
     applyBtn.className = 'btn';
@@ -2415,7 +2449,7 @@ async function downloadAndApplyTheme(theme) {
   try {
     const response = await fetch(theme.url);
     if (!response.ok) throw new Error('Failed to download theme');
-    const cssContent = await response.text();
+    const cssContent = sanitizeMarketplaceThemeCss(await response.text());
     
     // Ensure custom theme file exists, then write to it
     await window.electronAPI.initCustomTheme();
@@ -2678,11 +2712,28 @@ if (searchToggleBtn && searchInput && searchContainer) {
   });
 }
 
-function highlightMatch(text, query) {
-  if (!text || !query) return text || '';
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`(${escaped})`, 'gi');
-  return text.replace(regex, '<mark class="search-highlight">$1</mark>');
+function appendHighlightedText(container, text, query) {
+  const source = String(text || '');
+  const needle = String(query || '');
+  if (!needle) {
+    container.appendChild(document.createTextNode(source));
+    return;
+  }
+
+  const lowerSource = source.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  let cursor = 0;
+  let matchIndex = lowerSource.indexOf(lowerNeedle);
+  while (matchIndex !== -1) {
+    container.appendChild(document.createTextNode(source.slice(cursor, matchIndex)));
+    const mark = document.createElement('mark');
+    mark.className = 'search-highlight';
+    mark.textContent = source.slice(matchIndex, matchIndex + needle.length);
+    container.appendChild(mark);
+    cursor = matchIndex + needle.length;
+    matchIndex = lowerSource.indexOf(lowerNeedle, cursor);
+  }
+  container.appendChild(document.createTextNode(source.slice(cursor)));
 }
 
 async function triggerSearch(query) {
@@ -2708,37 +2759,39 @@ async function triggerSearch(query) {
     return;
   }
 
-  let html = '';
+  searchResults.replaceChildren();
   results.forEach(item => {
-    const highlightedName = highlightMatch(item.name, query);
     const dirPart = item.relPath.includes('/') ? item.relPath.substring(0, item.relPath.lastIndexOf('/') + 1) : '';
+    const resultItem = document.createElement('div');
+    resultItem.className = 'search-result-item';
+    resultItem.dataset.path = item.fullPath;
+    resultItem.dataset.name = item.name;
+    if (item.type === 'text') resultItem.dataset.line = String(item.lineNumber);
 
-    if (item.type === 'file') {
-      html += `
-        <div class="search-result-item" data-path="${item.fullPath}" data-name="${item.name}">
-          <div class="search-result-header">
-            <span class="search-file-title">📄 ${highlightedName}</span>
-            <span class="search-badge file-badge">File</span>
-          </div>
-          <div class="search-result-path">${item.relPath}</div>
-        </div>
-      `;
-    } else if (item.type === 'text') {
-      const highlightedLine = highlightMatch(item.lineText, query);
-      html += `
-        <div class="search-result-item" data-path="${item.fullPath}" data-name="${item.name}" data-line="${item.lineNumber}">
-          <div class="search-result-header">
-            <span class="search-file-title">📝 ${highlightedName}</span>
-            <span class="search-badge line-badge">Ln ${item.lineNumber}</span>
-          </div>
-          <div class="search-result-path">${dirPart}</div>
-          <div class="search-result-code">${highlightedLine}</div>
-        </div>
-      `;
+    const header = document.createElement('div');
+    header.className = 'search-result-header';
+    const title = document.createElement('span');
+    title.className = 'search-file-title';
+    title.appendChild(document.createTextNode(item.type === 'file' ? '📄 ' : '📝 '));
+    appendHighlightedText(title, item.name, query);
+    const badge = document.createElement('span');
+    badge.className = `search-badge ${item.type === 'file' ? 'file-badge' : 'line-badge'}`;
+    badge.textContent = item.type === 'file' ? 'File' : `Ln ${item.lineNumber}`;
+    header.append(title, badge);
+
+    const resultPath = document.createElement('div');
+    resultPath.className = 'search-result-path';
+    resultPath.textContent = item.type === 'file' ? item.relPath : dirPart;
+    resultItem.append(header, resultPath);
+
+    if (item.type === 'text') {
+      const code = document.createElement('div');
+      code.className = 'search-result-code';
+      appendHighlightedText(code, item.lineText, query);
+      resultItem.appendChild(code);
     }
+    searchResults.appendChild(resultItem);
   });
-
-  searchResults.innerHTML = html;
 
   const items = searchResults.querySelectorAll('.search-result-item');
   items.forEach(item => {
@@ -3332,7 +3385,7 @@ function switchSidebarView(viewName, pluginId = null) {
         try {
           pluginEntry.viewRenderer(customPluginViewBody);
         } catch (e) {
-          customPluginViewBody.innerHTML = `<div style="color: #e06c75; padding: 10px;">Plugin Error: ${e.message}</div>`;
+          customPluginViewBody.textContent = `Plugin Error: ${e.message}`;
         }
       }
       if (customPluginView) customPluginView.classList.remove('hidden');
@@ -3539,28 +3592,8 @@ function createPluginContext(manifest) {
 }
 
 async function activatePlugin(manifest) {
-  try {
-    const context = createPluginContext(manifest);
-    const entry = { manifest, context, viewTitle: manifest.name, viewRenderer: null, disposables: new Set() };
-    activePluginsMap.set(manifest.id, entry);
-
-    if (manifest.code) {
-      const exports = {};
-      const module = { exports };
-      const runFn = new Function('exports', 'module', 'context', manifest.code);
-      runFn(exports, module, context);
-      const instance = module.exports.onActivate ? module.exports : exports;
-      if (typeof instance.onActivate === 'function') {
-        instance.onActivate(context);
-      }
-      entry.instance = instance;
-    }
-
-    renderActivityBarPluginIcons();
-    renderSidebarInstalledPlugins();
-  } catch (error) {
-    console.error(`Failed to activate plugin ${manifest.id}:`, error);
-  }
+  console.warn(`Plugin activation blocked for ${manifest?.id || 'unknown plugin'}: isolated plugin runtime is not available.`);
+  return false;
 }
 
 function deactivatePlugin(pluginId) {
@@ -3632,13 +3665,8 @@ function renderActivityBarPluginIcons() {
     iconBtn.setAttribute('data-plugin-id', pluginId);
     iconBtn.title = entry.manifest.name;
 
-    let iconHtml = entry.manifest.icon || '🧩';
-    if (iconHtml.startsWith('<svg')) {
-      iconBtn.innerHTML = iconHtml;
-    } else {
-      iconBtn.textContent = iconHtml;
-      iconBtn.style.fontSize = '18px';
-    }
+    iconBtn.textContent = entry.manifest.icon || '🧩';
+    iconBtn.style.fontSize = '18px';
 
     iconBtn.addEventListener('click', () => {
       switchSidebarView('custom-plugin', pluginId);
@@ -3681,22 +3709,7 @@ async function loadInstalledPlugins() {
     }
   }
 
-  let enabledIds = getEnabledPluginIds();
-  enabledIds = enabledIds.filter(id => id !== 'word-counter' && id !== 'quick-notes');
-
-  // If installed plugins exist but none recorded in enabledIds yet, enable them by default
-  if (installed && installed.length > 0 && enabledIds.length === 0) {
-    enabledIds = installed.map(p => p.id);
-  }
-  setEnabledPluginIds(enabledIds);
-
-  if (installed && installed.length > 0) {
-    for (const plugin of installed) {
-      if (enabledIds.includes(plugin.id)) {
-        await activatePlugin(plugin);
-      }
-    }
-  }
+  setEnabledPluginIds([]);
 
   renderActivityBarPluginIcons();
   renderSidebarInstalledPlugins();
@@ -3727,13 +3740,13 @@ async function renderSidebarInstalledPlugins() {
     card.innerHTML = `
       <div class="sidebar-plugin-card-header">
         <div style="font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px;">
-          <span>${plugin.icon || '🧩'}</span>
-          <span>${plugin.name}</span>
+          <span>${escapeHtml(plugin.icon || '🧩')}</span>
+          <span>${escapeHtml(plugin.name)}</span>
         </div>
-        <input type="checkbox" class="sidebar-plugin-toggle" data-id="${plugin.id}" ${isEnabled ? 'checked' : ''} style="cursor: pointer;">
+        <input type="checkbox" class="sidebar-plugin-toggle" data-id="${escapeHtml(plugin.id)}" disabled title="Plugin runtime disabled pending sandboxing">
       </div>
-      <div style="font-size: 11px; color: var(--text-muted);">${plugin.description || ''}</div>
-      ${isEnabled ? `<button class="btn sidebar-open-plugin-btn" data-id="${plugin.id}" style="margin-top: 4px; font-size: 11px; padding: 3px 8px;">Open View</button>` : ''}
+      <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(plugin.description || '')}</div>
+      ${isEnabled ? `<button class="btn sidebar-open-plugin-btn" data-id="${escapeHtml(plugin.id)}" style="margin-top: 4px; font-size: 11px; padding: 3px 8px;">Open View</button>` : ''}
     `;
 
     const toggle = card.querySelector('.sidebar-plugin-toggle');
@@ -3796,55 +3809,23 @@ if (backToSettingsPlugin) {
     document.getElementById('settings-modal').classList.remove('hidden');
   });
 }
-// --- Developer Keypair Management (ECDSA P-256 / Web Crypto) ---
+// --- Developer Keypair Management (main process / OS-backed encryption) ---
 const DEV_KEY_STORAGE = 'atomic_developer_keypair';
 
 async function getOrCreateDeveloperKeyPair() {
-  try {
-    const raw = localStorage.getItem(DEV_KEY_STORAGE);
-    if (raw) {
-      const data = JSON.parse(raw);
-      const publicKey = await crypto.subtle.importKey(
-        'jwk',
-        data.publicKeyJwk,
-        { name: 'ECDSA', namedCurve: 'P-256' },
-        true,
-        ['verify']
-      );
-      const privateKey = await crypto.subtle.importKey(
-        'jwk',
-        data.privateKeyJwk,
-        { name: 'ECDSA', namedCurve: 'P-256' },
-        true,
-        ['sign']
-      );
-      return { publicKey, privateKey, publicKeyJwk: data.publicKeyJwk };
+  const legacyKey = localStorage.getItem(DEV_KEY_STORAGE);
+  if (legacyKey) {
+    const migration = await window.electronAPI.developerMigrateKey(JSON.parse(legacyKey));
+    if (migration.success || migration.reason === 'already-migrated') {
+      localStorage.removeItem(DEV_KEY_STORAGE);
     }
-  } catch (e) {}
-
-  // Generate new ECDSA P-256 Keypair
-  const keyPair = await crypto.subtle.generateKey(
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    true,
-    ['sign', 'verify']
-  );
-
-  const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-  const privateKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-
-  localStorage.setItem(DEV_KEY_STORAGE, JSON.stringify({ publicKeyJwk, privateKeyJwk }));
-  return { publicKey: keyPair.publicKey, privateKey: keyPair.privateKey, publicKeyJwk };
+  }
+  return { publicKeyJwk: await window.electronAPI.developerGetPublicKey() };
 }
 
 async function signDataWithDevKey(dataString) {
-  const { privateKey } = await getOrCreateDeveloperKeyPair();
-  const enc = new TextEncoder();
-  const signatureBuffer = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: { name: 'SHA-256' } },
-    privateKey,
-    enc.encode(dataString)
-  );
-  return btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
+  await getOrCreateDeveloperKeyPair();
+  return window.electronAPI.developerSign(dataString);
 }
 
 function getAuthoredPluginIds() {
@@ -3935,24 +3916,24 @@ async function renderCommunityPlugins(plugins) {
     card.innerHTML = `
       <div class="plugin-card-header">
         <div class="plugin-card-title">
-          <span>${plugin.icon || '🧩'}</span>
-          <span>${plugin.name}</span>
-          <span class="plugin-badge-pill">v${plugin.version || '1.0.0'}</span>
-          ${hasUpdate ? `<span class="plugin-update-pill">v${plugin.version} available</span>` : ''}
+          <span>${escapeHtml(plugin.icon || '🧩')}</span>
+          <span>${escapeHtml(plugin.name)}</span>
+          <span class="plugin-badge-pill">v${escapeHtml(plugin.version || '1.0.0')}</span>
+          ${hasUpdate ? `<span class="plugin-update-pill">v${escapeHtml(plugin.version)} available</span>` : ''}
         </div>
-        <div class="plugin-card-author">by ${plugin.author || 'Community'}</div>
+        <div class="plugin-card-author">by ${escapeHtml(plugin.author || 'Community')}</div>
       </div>
-      <div class="plugin-card-desc">${plugin.description || 'No description provided.'}</div>
+      <div class="plugin-card-desc">${escapeHtml(plugin.description || 'No description provided.')}</div>
       <div class="plugin-card-footer">
         <div class="plugin-rating-stars">
           ${starsHtml}
-          <span style="font-size: 11px; color: var(--text-muted); margin-left: 4px;">(${plugin.ratingsCount || 1})</span>
+          <span style="font-size: 11px; color: var(--text-muted); margin-left: 4px;">(${escapeHtml(plugin.ratingsCount || 1)})</span>
         </div>
         <div style="display: flex; gap: 6px;">
-          ${hasUpdate ? `<button class="btn plugin-update-btn" data-id="${plugin.id}" style="background: #e5c07b; color: #1e1e1e; font-weight: 600; font-size: 11px; padding: 4px 10px;">Update</button>` : ''}
+          ${hasUpdate ? `<button class="btn plugin-update-btn" data-id="${escapeHtml(plugin.id)}" style="background: #e5c07b; color: #1e1e1e; font-weight: 600; font-size: 11px; padding: 4px 10px;">Update</button>` : ''}
           ${isInstalled
-            ? `<button class="btn plugin-uninstall-btn" data-id="${plugin.id}" style="background: rgba(224, 108, 117, 0.15); color: #e06c75; border-color: rgba(224, 108, 117, 0.3); font-size: 11px; padding: 4px 10px;">Uninstall</button>`
-            : `<button class="btn plugin-install-btn" data-id="${plugin.id}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 12px;">Install</button>`
+            ? `<button class="btn plugin-uninstall-btn" data-id="${escapeHtml(plugin.id)}" style="background: rgba(224, 108, 117, 0.15); color: #e06c75; border-color: rgba(224, 108, 117, 0.3); font-size: 11px; padding: 4px 10px;">Uninstall</button>`
+            : `<button class="btn plugin-install-btn" data-id="${escapeHtml(plugin.id)}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 12px;">Install</button>`
           }
         </div>
       </div>
@@ -4007,7 +3988,7 @@ function renderStarRatingHtml(rating, pluginId) {
   let html = '';
   for (let i = 1; i <= 5; i++) {
     const starChar = i <= rounded ? '★' : '☆';
-    html += `<span class="star-rate-btn" data-plugin-id="${pluginId}" data-val="${i}" title="Rate ${i} stars">${starChar}</span>`;
+    html += `<span class="star-rate-btn" data-plugin-id="${escapeHtml(pluginId)}" data-val="${i}" title="Rate ${i} stars">${starChar}</span>`;
   }
   return html;
 }
@@ -4078,23 +4059,23 @@ async function renderInstalledModalList() {
     card.innerHTML = `
       <div class="plugin-card-header">
         <div class="plugin-card-title">
-          <span>${plugin.icon || '🧩'}</span>
-          <span>${plugin.name}</span>
-          <span class="plugin-badge-pill">v${plugin.version || '1.0.0'}</span>
-          ${hasUpdate ? `<span class="plugin-update-pill">v${catalogEntry.version} Available</span>` : ''}
+          <span>${escapeHtml(plugin.icon || '🧩')}</span>
+          <span>${escapeHtml(plugin.name)}</span>
+          <span class="plugin-badge-pill">v${escapeHtml(plugin.version || '1.0.0')}</span>
+          ${hasUpdate ? `<span class="plugin-update-pill">v${escapeHtml(catalogEntry.version)} Available</span>` : ''}
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <label style="font-size: 11px; color: var(--text-muted);">Enabled</label>
-          <input type="checkbox" class="modal-plugin-toggle" data-id="${plugin.id}" ${isEnabled ? 'checked' : ''} style="cursor: pointer;">
+          <input type="checkbox" class="modal-plugin-toggle" data-id="${escapeHtml(plugin.id)}" disabled title="Plugin runtime disabled pending sandboxing">
         </div>
       </div>
-      <div class="plugin-card-desc">${plugin.description || ''}</div>
-      ${hasUpdate && catalogEntry.changelog ? `<div style="font-size: 11px; background: var(--bg-dark); border-left: 2px solid #e5c07b; padding: 4px 8px; border-radius: 2px; color: var(--text-normal); margin: 4px 0;"><strong>What's New:</strong> ${catalogEntry.changelog}</div>` : ''}
+      <div class="plugin-card-desc">${escapeHtml(plugin.description || '')}</div>
+      ${hasUpdate && catalogEntry.changelog ? `<div style="font-size: 11px; background: var(--bg-dark); border-left: 2px solid #e5c07b; padding: 4px 8px; border-radius: 2px; color: var(--text-normal); margin: 4px 0;"><strong>What's New:</strong> ${escapeHtml(catalogEntry.changelog)}</div>` : ''}
       <div class="plugin-card-footer">
-        <span style="font-size: 11px; color: var(--text-muted);">by ${plugin.author || 'Unknown'}</span>
+        <span style="font-size: 11px; color: var(--text-muted);">by ${escapeHtml(plugin.author || 'Unknown')}</span>
         <div style="display: flex; gap: 6px;">
-          ${hasUpdate ? `<button class="btn modal-plugin-update-btn" data-id="${plugin.id}" style="background: #e5c07b; color: #1e1e1e; font-weight: 600; font-size: 11px; padding: 4px 12px;">Update to v${catalogEntry.version}</button>` : ''}
-          <button class="btn modal-plugin-uninstall" data-id="${plugin.id}" style="background: rgba(224, 108, 117, 0.15); color: #e06c75; border-color: rgba(224, 108, 117, 0.3); font-size: 11px; padding: 4px 10px;">Uninstall</button>
+          ${hasUpdate ? `<button class="btn modal-plugin-update-btn" data-id="${escapeHtml(plugin.id)}" style="background: #e5c07b; color: #1e1e1e; font-weight: 600; font-size: 11px; padding: 4px 12px;">Update to v${escapeHtml(catalogEntry.version)}</button>` : ''}
+          <button class="btn modal-plugin-uninstall" data-id="${escapeHtml(plugin.id)}" style="background: rgba(224, 108, 117, 0.15); color: #e06c75; border-color: rgba(224, 108, 117, 0.3); font-size: 11px; padding: 4px 10px;">Uninstall</button>
         </div>
       </div>
     `;
@@ -4165,17 +4146,17 @@ async function renderMyPluginsTab() {
     card.innerHTML = `
       <div class="plugin-card-header">
         <div class="plugin-card-title">
-          <span>${item.icon || '🪣'}</span>
-          <span>${item.name}</span>
-          <span class="plugin-badge-pill">v${item.version || '1.0.0'}</span>
+          <span>${escapeHtml(item.icon || '🪣')}</span>
+          <span>${escapeHtml(item.name)}</span>
+          <span class="plugin-badge-pill">v${escapeHtml(item.version || '1.0.0')}</span>
           <span class="plugin-verified-pill">Author 🛡️</span>
         </div>
-        <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${item.id}</span>
+        <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${escapeHtml(item.id)}</span>
       </div>
-      <div class="plugin-card-desc">${item.description || 'Manage and release updates for this plugin.'}</div>
+      <div class="plugin-card-desc">${escapeHtml(item.description || 'Manage and release updates for this plugin.')}</div>
       <div class="plugin-card-footer">
-        <span style="font-size: 11px; color: var(--text-muted);">${catalogEntry ? `Live Rating: ★ ${catalogEntry.rating || 5} (${catalogEntry.ratingsCount || 1})` : 'Published'}</span>
-        <button class="btn my-plugin-update-btn" data-id="${item.id}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 12px;">Publish New Version</button>
+        <span style="font-size: 11px; color: var(--text-muted);">${catalogEntry ? `Live Rating: ★ ${escapeHtml(catalogEntry.rating || 5)} (${escapeHtml(catalogEntry.ratingsCount || 1)})` : 'Published'}</span>
+        <button class="btn my-plugin-update-btn" data-id="${escapeHtml(item.id)}" style="background: var(--accent-blue); color: #fff; font-size: 11px; padding: 4px 12px;">Publish New Version</button>
       </div>
     `;
 
@@ -4311,16 +4292,13 @@ async function installPlugin(plugin) {
       }
     }
     if (window.electronAPI && window.electronAPI.pluginInstall) {
-      await window.electronAPI.pluginInstall(fullPlugin);
+      const installResult = await window.electronAPI.pluginInstall(fullPlugin);
+      if (!installResult?.success) throw new Error(installResult?.error || 'Plugin installation failed');
     }
-    let enabledIds = getEnabledPluginIds();
-    if (!enabledIds.includes(fullPlugin.id)) {
-      enabledIds.push(fullPlugin.id);
-      setEnabledPluginIds(enabledIds);
-    }
-    // Deactivate old instance first to ensure clean hot-reload
+    // Manifests may be installed, but code is not activated until plugins run
+    // in a separate, capability-limited process.
     deactivatePlugin(fullPlugin.id);
-    await activatePlugin(fullPlugin);
+    setEnabledPluginIds(getEnabledPluginIds().filter(id => id !== fullPlugin.id));
     renderSidebarInstalledPlugins();
     renderActivityBarPluginIcons();
   } catch (err) {
@@ -4380,11 +4358,13 @@ if (uploadPluginBtn) {
     uploadPluginBtn.disabled = true;
 
     try {
+      const signTarget = `${id}:${version}:${code}`;
+      const signature = await signDataWithDevKey(signTarget);
       const { publicKeyJwk } = await getOrCreateDeveloperKeyPair();
       const res = await fetch(PLUGIN_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, name, author, version, icon, description, code, publicKeyJwk })
+        body: JSON.stringify({ id, name, author, version, icon, description, code, signature, publicKeyJwk })
       });
 
       if (res.ok) {
@@ -4402,9 +4382,7 @@ if (uploadPluginBtn) {
         throw new Error(data.error || 'Server returned ' + res.status);
       }
     } catch (e) {
-      alert('Plugin submitted: ' + e.message);
-      addAuthoredPluginId(id);
-      await installPlugin({ id, name, author, version, icon, description, code });
+      alert('Plugin submission failed: ' + e.message);
     } finally {
       uploadPluginBtn.textContent = 'Sign & Submit Plugin For Approval';
       uploadPluginBtn.disabled = false;

@@ -8,7 +8,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder build --publish never"
+    "build": "electron-builder build --publish never",
+    "test": "node --test"
   },
   "build": {
     "appId": "com.atom.reborn",
@@ -22,7 +23,7 @@
         "dmg",
         "zip"
       ],
-      "identity": null
+      "hardenedRuntime": true
     },
     "win": {
       "target": [
@@ -45,7 +46,7 @@
   "license": "ISC",
   "description": "A lightweight, modern text editor built on Electron 30 and Node 20.",
   "devDependencies": {
-    "electron": "^30.5.1",
+    "electron": "^44.4.5",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
@@ -53,7 +54,7 @@
     "@xterm/xterm": "^6.0.0",
     "electron-updater": "^6.8.9",
     "jsdom": "^30.0.1",
-    "monaco-editor": "^0.56.0",
+    "monaco-editor": "^0.57.0",
     "node-pty": "^1.1.0"
   }
 }

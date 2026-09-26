@@ -1,12 +1,181 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, nativeTheme, safeStorage, session, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { execFile, spawn } = require('node:child_process');
+const { webcrypto } = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const pty = require('node-pty');
 const util = require('node:util');
+const { isValidPluginId } = require('./security-utils');
 const execFileAsync = util.promisify(execFile);
+
+const approvedPathsBySender = new Map();
+const expectedRendererPath = path.resolve(__dirname, 'index.html');
+
+function isPathWithin(rootPath, targetPath) {
+  const relative = path.relative(rootPath, targetPath);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+async function canonicalizePath(inputPath) {
+  if (typeof inputPath !== 'string' || inputPath.length === 0 || inputPath.includes('\0')) {
+    throw new Error('Invalid path');
+  }
+
+  let probe = path.resolve(inputPath);
+  const missingSegments = [];
+  while (true) {
+    try {
+      const realPath = await fs.realpath(probe);
+      return path.join(realPath, ...missingSegments.reverse());
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const parent = path.dirname(probe);
+      if (parent === probe) throw error;
+      missingSegments.push(path.basename(probe));
+      probe = parent;
+    }
+  }
+}
+
+function senderPermissions(event) {
+  const senderId = event.sender.id;
+  if (!approvedPathsBySender.has(senderId)) {
+    approvedPathsBySender.set(senderId, { roots: new Set(), files: new Set() });
+  }
+  return approvedPathsBySender.get(senderId);
+}
+
+async function approveRoot(event, rootPath) {
+  senderPermissions(event).roots.add(await canonicalizePath(rootPath));
+}
+
+async function approveFile(event, filePath) {
+  senderPermissions(event).files.add(await canonicalizePath(filePath));
+}
+
+async function assertApprovedPath(event, targetPath) {
+  const canonicalTarget = await canonicalizePath(targetPath);
+  const permissions = senderPermissions(event);
+  if (permissions.files.has(canonicalTarget)) return canonicalTarget;
+  if ([...permissions.roots].some(rootPath => isPathWithin(rootPath, canonicalTarget))) return canonicalTarget;
+  throw new Error('Path is outside the folders approved for this window');
+}
+
+function isTrustedIpcSender(event) {
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) return false;
+  try {
+    const senderUrl = new URL(event.senderFrame.url);
+    return senderUrl.protocol === 'file:' && path.resolve(fileURLToPath(senderUrl)) === expectedRendererPath;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function authorizeIpcPath(channel, event, args) {
+  const payload = args[0];
+  if (channel.startsWith('fs:') && channel !== 'fs:searchWorkspace') {
+    const paths = channel === 'fs:rename' ? [args[0], args[1]] : [args[0]];
+    for (const targetPath of paths) {
+      const canonicalTarget = await assertApprovedPath(event, targetPath);
+      if ((channel === 'fs:delete' || channel === 'fs:rename') && senderPermissions(event).roots.has(canonicalTarget)) {
+        throw new Error('Cannot delete or rename an approved workspace root');
+      }
+    }
+    return;
+  }
+
+  if (channel === 'fs:searchWorkspace') {
+    await assertApprovedPath(event, payload?.dirPath);
+    return;
+  }
+
+  if (channel.startsWith('git:')) {
+    const dirPath = typeof payload === 'string' ? payload : payload?.dirPath;
+    const canonicalRoot = await assertApprovedPath(event, dirPath);
+    const relativePaths = [payload?.filePath, ...(Array.isArray(payload?.files) ? payload.files : [])].filter(Boolean);
+    for (const relativePath of relativePaths) {
+      if (path.isAbsolute(relativePath) || !isPathWithin(canonicalRoot, path.resolve(canonicalRoot, relativePath))) {
+        throw new Error('Git path escapes the approved workspace');
+      }
+    }
+    return;
+  }
+
+  if (channel === 'terminal:exec' || channel === 'terminal:spawnPty') {
+    if (payload?.cwd) await assertApprovedPath(event, payload.cwd);
+    return;
+  }
+
+  if (channel === 'lsp:start' && payload?.rootPath) {
+    await assertApprovedPath(event, payload.rootPath);
+  }
+}
+
+function handleTrusted(channel, listener) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (!isTrustedIpcSender(event)) throw new Error('Untrusted IPC sender');
+    await authorizeIpcPath(channel, event, args);
+    return listener(event, ...args);
+  });
+}
+
+function onTrusted(channel, listener) {
+  ipcMain.on(channel, (event, ...args) => {
+    if (!isTrustedIpcSender(event)) return;
+    listener(event, ...args);
+  });
+}
+
+const developerKeyPath = () => path.join(app.getPath('userData'), 'developer-signing-key.enc');
+
+async function persistDeveloperKeyPair(keyData) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS credential storage is unavailable');
+  const encrypted = safeStorage.encryptString(JSON.stringify(keyData));
+  await fs.writeFile(developerKeyPath(), encrypted, { mode: 0o600 });
+}
+
+async function readDeveloperKeyData() {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS credential storage is unavailable');
+  try {
+    const encrypted = await fs.readFile(developerKeyPath());
+    return JSON.parse(safeStorage.decryptString(encrypted));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function getOrCreateDeveloperKeyData() {
+  const existing = await readDeveloperKeyData();
+  if (existing) return existing;
+
+  const keyPair = await webcrypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify']
+  );
+  const keyData = {
+    publicKeyJwk: await webcrypto.subtle.exportKey('jwk', keyPair.publicKey),
+    privateKeyJwk: await webcrypto.subtle.exportKey('jwk', keyPair.privateKey)
+  };
+  await persistDeveloperKeyPair(keyData);
+  return keyData;
+}
+
+async function validateDeveloperKeyData(keyData) {
+  if (!keyData?.publicKeyJwk || !keyData?.privateKeyJwk) return false;
+  const privateKey = await webcrypto.subtle.importKey(
+    'jwk', keyData.privateKeyJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']
+  );
+  const publicKey = await webcrypto.subtle.importKey(
+    'jwk', keyData.publicKeyJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']
+  );
+  const message = Buffer.from('atomic-key-validation');
+  const signature = await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, message);
+  return webcrypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, publicKey, signature, message);
+}
 
 const LSP_SERVER_CONFIGS = {
   javascript: { command: 'typescript-language-server', args: ['--stdio'], label: 'TypeScript Language Server' },
@@ -33,7 +202,7 @@ function uriToLspPath(uri) {
 let mainWindow; // Keep reference to first window for legacy checks if any, though we should try to avoid it
 const windowStates = new Map();
 
-function createWindow(initialState = null) {
+function createWindow(initialState = null, approvedInitialFile = null) {
   const win = new BrowserWindow({
     width: 1024,
     height: 768,
@@ -42,15 +211,29 @@ function createWindow(initialState = null) {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true
     }
   });
+  const webContentsId = win.webContents.id;
 
   if (initialState) {
     windowStates.set(win.id, initialState);
   }
+  if (approvedInitialFile) {
+    approvedPathsBySender.set(webContentsId, { roots: new Set(), files: new Set([approvedInitialFile]) });
+  }
 
   win.loadFile('index.html');
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, navigationUrl) => {
+    try {
+      if (path.resolve(fileURLToPath(navigationUrl)) === expectedRendererPath) return;
+    } catch (error) {}
+    event.preventDefault();
+  });
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault());
   
   win.webContents.on('console-message', (event, level, message, line, sourceId) => {
       console.log(`[Renderer ${win.id}] ${message}`);
@@ -58,6 +241,7 @@ function createWindow(initialState = null) {
 
   win.on('closed', () => {
     windowStates.delete(win.id);
+    approvedPathsBySender.delete(webContentsId);
     stopLspServersForWindow(win.id);
   });
   
@@ -203,7 +387,7 @@ const template = [
 }
 
 // IPC handler for restarting the app after update download
-ipcMain.on('restart_app', () => {
+onTrusted('restart_app', () => {
   if (process.platform === 'darwin') {
     require('electron').shell.openExternal('https://github.com/samwozencroft/atomic/releases/latest');
   } else {
@@ -211,23 +395,25 @@ ipcMain.on('restart_app', () => {
   }
 });
 
-ipcMain.on('app:reportIssue', () => {
+onTrusted('app:reportIssue', () => {
   require('electron').shell.openExternal('https://github.com/samwozencroft/atomic/issues');
 });
 
-ipcMain.handle('app:getVersion', () => {
+handleTrusted('app:getVersion', () => {
   return app.getVersion();
 });
 
-ipcMain.handle('app:getNativeTheme', () => {
+handleTrusted('app:getNativeTheme', () => {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 });
 
-ipcMain.handle('app:getCustomThemePath', () => {
-  return path.join(app.getPath('userData'), 'custom-theme.css');
+handleTrusted('app:getCustomThemePath', async (event) => {
+  const themePath = path.join(app.getPath('userData'), 'custom-theme.css');
+  await approveFile(event, themePath);
+  return themePath;
 });
 
-ipcMain.handle('app:initCustomTheme', async () => {
+handleTrusted('app:initCustomTheme', async () => {
   const themePath = path.join(app.getPath('userData'), 'custom-theme.css');
   try {
     await fs.access(themePath);
@@ -258,7 +444,7 @@ ipcMain.handle('app:initCustomTheme', async () => {
   return true;
 });
 
-ipcMain.handle('app:resetCustomTheme', async () => {
+handleTrusted('app:resetCustomTheme', async () => {
   const themePath = path.join(app.getPath('userData'), 'custom-theme.css');
   const template = `/* Atomic Custom Theme */
 /* Modify these variables to customize your editor's appearance */
@@ -286,6 +472,7 @@ ipcMain.handle('app:resetCustomTheme', async () => {
 });
 
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   createWindow();
 
   nativeTheme.on('updated', () => {
@@ -304,11 +491,14 @@ app.on('window-all-closed', function () {
 });
 
 
-ipcMain.on('window:createNew', (event, payload) => {
-  createWindow(payload);
+onTrusted('window:createNew', async (event, payload) => {
+  const approvedInitialFile = payload?.filePath
+    ? await assertApprovedPath(event, payload.filePath)
+    : null;
+  createWindow(payload, approvedInitialFile);
 });
 
-ipcMain.handle('window:getInitialState', (event) => {
+handleTrusted('window:getInitialState', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && windowStates.has(win.id)) {
     const state = windowStates.get(win.id);
@@ -319,24 +509,26 @@ ipcMain.handle('window:getInitialState', (event) => {
 });
 
 // Existing IPC Handlers
-ipcMain.handle('dialog:openDirectory', async (event) => {
+handleTrusted('dialog:openDirectory', async (event) => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openDirectory']
   });
   if (canceled) {
     return null;
   } else {
+    await approveRoot(event, filePaths[0]);
     return filePaths[0];
   }
 });
 
-ipcMain.handle('dialog:openFile', async (event) => {
+handleTrusted('dialog:openFile', async (event) => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openFile']
   });
   if (canceled) {
     return null;
   } else {
+    await approveRoot(event, path.dirname(filePaths[0]));
     return {
       path: filePaths[0],
       name: path.basename(filePaths[0])
@@ -344,7 +536,7 @@ ipcMain.handle('dialog:openFile', async (event) => {
   }
 });
 
-ipcMain.handle('fs:readDir', async (event, dirPath) => {
+handleTrusted('fs:readDir', async (event, dirPath) => {
   try {
     const targetDir = (!dirPath || dirPath === '.') ? process.cwd() : dirPath;
     const entries = await fs.readdir(targetDir, { withFileTypes: true });
@@ -363,7 +555,7 @@ ipcMain.handle('fs:readDir', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('fs:readFile', async (event, filePath) => {
+handleTrusted('fs:readFile', async (event, filePath) => {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     return content;
@@ -373,7 +565,7 @@ ipcMain.handle('fs:readFile', async (event, filePath) => {
   }
 });
 
-ipcMain.handle('fs:writeFile', async (event, filePath, content) => {
+handleTrusted('fs:writeFile', async (event, filePath, content) => {
   try {
     await fs.writeFile(filePath, content, 'utf-8');
     return true;
@@ -383,7 +575,7 @@ ipcMain.handle('fs:writeFile', async (event, filePath, content) => {
   }
 });
 
-ipcMain.handle('fs:mkdir', async (event, dirPath) => {
+handleTrusted('fs:mkdir', async (event, dirPath) => {
   try {
     await fs.mkdir(dirPath, { recursive: true });
     return true;
@@ -392,7 +584,7 @@ ipcMain.handle('fs:mkdir', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('fs:rename', async (event, oldPath, newPath) => {
+handleTrusted('fs:rename', async (event, oldPath, newPath) => {
   try {
     await fs.rename(oldPath, newPath);
     return true;
@@ -401,7 +593,7 @@ ipcMain.handle('fs:rename', async (event, oldPath, newPath) => {
   }
 });
 
-ipcMain.handle('fs:delete', async (event, targetPath) => {
+handleTrusted('fs:delete', async (event, targetPath) => {
   try {
     await fs.rm(targetPath, { recursive: true, force: true });
     return true;
@@ -410,7 +602,7 @@ ipcMain.handle('fs:delete', async (event, targetPath) => {
   }
 });
 
-ipcMain.handle('fs:copy', async (event, targetPath) => {
+handleTrusted('fs:copy', async (event, targetPath) => {
   try {
     const parsed = require('path').parse(targetPath);
     const newPath = require('path').join(parsed.dir, `${parsed.name}-copy${parsed.ext}`);
@@ -421,7 +613,7 @@ ipcMain.handle('fs:copy', async (event, targetPath) => {
   }
 });
 
-ipcMain.handle('fs:openInFinder', async (event, targetPath) => {
+handleTrusted('fs:openInFinder', async (event, targetPath) => {
   try {
     require('electron').shell.showItemInFolder(targetPath);
     return true;
@@ -433,7 +625,7 @@ ipcMain.handle('fs:openInFinder', async (event, targetPath) => {
 const os = require('os');
 let previousCpuInfo = os.cpus();
 
-ipcMain.handle('app:getSystemStats', () => {
+handleTrusted('app:getSystemStats', () => {
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
   const usedMem = totalMem - freeMem;
@@ -460,15 +652,17 @@ ipcMain.handle('app:getSystemStats', () => {
   return { cpu: cpuPercent, memory: memPercent };
 });
 
-ipcMain.handle('dialog:showSaveDialog', async (event, defaultPath) => {
+handleTrusted('dialog:showSaveDialog', async (event, defaultPath) => {
   const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
     defaultPath,
     properties: ['showOverwriteConfirmation']
   });
-  return result.canceled ? null : result.filePath;
+  if (result.canceled) return null;
+  await approveRoot(event, path.dirname(result.filePath));
+  return result.filePath;
 });
 
-ipcMain.handle('git:getStatus', async (event, dirPath) => {
+handleTrusted('git:getStatus', async (event, dirPath) => {
   if (!dirPath) return { isRepo: false, error: 'No workspace folder opened' };
   try {
     await execFileAsync('git', ['--version']);
@@ -535,7 +729,7 @@ ipcMain.handle('git:getStatus', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:getSyncStatus', async (event, dirPath) => {
+handleTrusted('git:getSyncStatus', async (event, dirPath) => {
   if (!dirPath) return { success: false, ahead: 0, behind: 0 };
   try {
     let ahead = 0;
@@ -554,7 +748,7 @@ ipcMain.handle('git:getSyncStatus', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:stageFile', async (event, { dirPath, filePath }) => {
+handleTrusted('git:stageFile', async (event, { dirPath, filePath }) => {
   try {
     await execFileAsync('git', ['add', filePath], { cwd: dirPath });
     return true;
@@ -563,7 +757,7 @@ ipcMain.handle('git:stageFile', async (event, { dirPath, filePath }) => {
   }
 });
 
-ipcMain.handle('git:unstageFile', async (event, { dirPath, filePath }) => {
+handleTrusted('git:unstageFile', async (event, { dirPath, filePath }) => {
   try {
     await execFileAsync('git', ['reset', 'HEAD', filePath], { cwd: dirPath });
     return true;
@@ -572,7 +766,7 @@ ipcMain.handle('git:unstageFile', async (event, { dirPath, filePath }) => {
   }
 });
 
-ipcMain.handle('git:commit', async (event, { dirPath, message, files }) => {
+handleTrusted('git:commit', async (event, { dirPath, message, files }) => {
   if (!dirPath || !message) return { success: false, error: 'Missing parameter' };
   try {
     // Unstage everything first
@@ -597,7 +791,7 @@ ipcMain.handle('git:commit', async (event, { dirPath, message, files }) => {
   }
 });
 
-ipcMain.handle('git:getBranches', async (event, dirPath) => {
+handleTrusted('git:getBranches', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No directory' };
   try {
     const { stdout } = await execFileAsync('git', ['branch', '--list'], { cwd: dirPath });
@@ -613,7 +807,7 @@ ipcMain.handle('git:getBranches', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:checkoutBranch', async (event, { dirPath, branchName }) => {
+handleTrusted('git:checkoutBranch', async (event, { dirPath, branchName }) => {
   if (!dirPath || !branchName) return { success: false, error: 'Missing parameter' };
   try {
     const { stdout } = await execFileAsync('git', ['checkout', branchName], { cwd: dirPath });
@@ -623,7 +817,7 @@ ipcMain.handle('git:checkoutBranch', async (event, { dirPath, branchName }) => {
   }
 });
 
-ipcMain.handle('git:createBranch', async (event, { dirPath, branchName }) => {
+handleTrusted('git:createBranch', async (event, { dirPath, branchName }) => {
   if (!dirPath || !branchName) return { success: false, error: 'Missing parameter' };
   try {
     const { stdout } = await execFileAsync('git', ['checkout', '-b', branchName], { cwd: dirPath });
@@ -633,7 +827,7 @@ ipcMain.handle('git:createBranch', async (event, { dirPath, branchName }) => {
   }
 });
 
-ipcMain.handle('git:push', async (event, dirPath) => {
+handleTrusted('git:push', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No workspace opened' };
   try {
     const { stdout } = await execFileAsync('git', ['push'], { cwd: dirPath });
@@ -643,7 +837,7 @@ ipcMain.handle('git:push', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:pull', async (event, dirPath) => {
+handleTrusted('git:pull', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No workspace opened' };
   try {
     const { stdout } = await execFileAsync('git', ['pull'], { cwd: dirPath });
@@ -653,7 +847,7 @@ ipcMain.handle('git:pull', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:fetch', async (event, dirPath) => {
+handleTrusted('git:fetch', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No workspace opened' };
   try {
     const { stdout } = await execFileAsync('git', ['fetch'], { cwd: dirPath });
@@ -663,7 +857,7 @@ ipcMain.handle('git:fetch', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:stash', async (event, { dirPath, message }) => {
+handleTrusted('git:stash', async (event, { dirPath, message }) => {
   if (!dirPath) return { success: false, error: 'No workspace opened' };
   try {
     const args = message ? ['stash', 'save', message] : ['stash'];
@@ -674,7 +868,7 @@ ipcMain.handle('git:stash', async (event, { dirPath, message }) => {
   }
 });
 
-ipcMain.handle('git:stashPop', async (event, dirPath) => {
+handleTrusted('git:stashPop', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No workspace opened' };
   try {
     const { stdout } = await execFileAsync('git', ['stash', 'pop'], { cwd: dirPath });
@@ -684,7 +878,7 @@ ipcMain.handle('git:stashPop', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:merge', async (event, { dirPath, branchName }) => {
+handleTrusted('git:merge', async (event, { dirPath, branchName }) => {
   if (!dirPath || !branchName) return { success: false, error: 'Missing parameter' };
   try {
     const { stdout } = await execFileAsync('git', ['merge', branchName], { cwd: dirPath });
@@ -694,7 +888,7 @@ ipcMain.handle('git:merge', async (event, { dirPath, branchName }) => {
   }
 });
 
-ipcMain.handle('git:getHistory', async (event, dirPath) => {
+handleTrusted('git:getHistory', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No workspace folder opened' };
   try {
     const { stdout } = await execFileAsync('git', ['log', '-n', '30', '--pretty=format:%h|%an|%ar|%s'], { cwd: dirPath });
@@ -708,7 +902,7 @@ ipcMain.handle('git:getHistory', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:getGraph', async (event, dirPath) => {
+handleTrusted('git:getGraph', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No workspace folder opened' };
   try {
     const { stdout } = await execFileAsync('git', ['log', '--graph', '--oneline', '--all', '--decorate', '-n', '30'], { cwd: dirPath });
@@ -718,7 +912,7 @@ ipcMain.handle('git:getGraph', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:getFileDiff', async (event, { dirPath, filePath, staged }) => {
+handleTrusted('git:getFileDiff', async (event, { dirPath, filePath, staged }) => {
   if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
   try {
     // Get raw original file from git (show HEAD:file)
@@ -744,7 +938,7 @@ ipcMain.handle('git:getFileDiff', async (event, { dirPath, filePath, staged }) =
   }
 });
 
-ipcMain.handle('git:stagePath', async (event, { dirPath, filePath }) => {
+handleTrusted('git:stagePath', async (event, { dirPath, filePath }) => {
   if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
   try {
     await execFileAsync('git', ['add', filePath], { cwd: dirPath });
@@ -754,7 +948,7 @@ ipcMain.handle('git:stagePath', async (event, { dirPath, filePath }) => {
   }
 });
 
-ipcMain.handle('git:unstagePath', async (event, { dirPath, filePath }) => {
+handleTrusted('git:unstagePath', async (event, { dirPath, filePath }) => {
   if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
   try {
     await execFileAsync('git', ['reset', 'HEAD', '--', filePath], { cwd: dirPath });
@@ -764,7 +958,7 @@ ipcMain.handle('git:unstagePath', async (event, { dirPath, filePath }) => {
   }
 });
 
-ipcMain.handle('git:getBlame', async (event, { dirPath, filePath }) => {
+handleTrusted('git:getBlame', async (event, { dirPath, filePath }) => {
   if (!dirPath || !filePath) return { success: false, error: 'Missing parameters' };
   try {
     const { stdout } = await execFileAsync('git', ['blame', '--porcelain', filePath], { cwd: dirPath });
@@ -774,7 +968,7 @@ ipcMain.handle('git:getBlame', async (event, { dirPath, filePath }) => {
   }
 });
 
-ipcMain.handle('git:getConflicts', async (event, dirPath) => {
+handleTrusted('git:getConflicts', async (event, dirPath) => {
   if (!dirPath) return { success: false, error: 'No workspace folder opened' };
   try {
     const { stdout } = await execFileAsync('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: dirPath });
@@ -785,7 +979,7 @@ ipcMain.handle('git:getConflicts', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('git:resolveConflict', async (event, { dirPath, filePath, choice }) => {
+handleTrusted('git:resolveConflict', async (event, { dirPath, filePath, choice }) => {
   if (!dirPath || !filePath || !choice) return { success: false, error: 'Missing parameters' };
   try {
     const mode = choice === 'ours' ? '--ours' : '--theirs';
@@ -797,7 +991,7 @@ ipcMain.handle('git:resolveConflict', async (event, { dirPath, filePath, choice 
   }
 });
 
-ipcMain.handle('fs:searchWorkspace', async (event, { dirPath, query }) => {
+handleTrusted('fs:searchWorkspace', async (event, { dirPath, query }) => {
   if (!dirPath || !query || query.trim().length === 0) return [];
   const results = [];
   const q = query.toLowerCase().trim();
@@ -867,7 +1061,7 @@ ipcMain.handle('fs:searchWorkspace', async (event, { dirPath, query }) => {
 
 const activeTerminalProcesses = new Map();
 
-ipcMain.handle('terminal:getShell', () => {
+handleTrusted('terminal:getShell', () => {
   if (process.platform === 'win32') return { name: 'PowerShell', platform: 'win32' };
   if (process.platform === 'darwin') {
     const sh = process.env.SHELL ? path.basename(process.env.SHELL) : 'zsh';
@@ -877,7 +1071,7 @@ ipcMain.handle('terminal:getShell', () => {
   return { name: `Terminal (${sh})`, platform: 'linux' };
 });
 
-ipcMain.handle('terminal:exec', async (event, { command, cwd }) => {
+handleTrusted('terminal:exec', async (event, { command, cwd }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const winId = win ? win.id : 1;
 
@@ -930,7 +1124,7 @@ ipcMain.handle('terminal:exec', async (event, { command, cwd }) => {
   });
 });
 
-ipcMain.handle('terminal:writeInput', (event, input) => {
+handleTrusted('terminal:writeInput', (event, input) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const winId = win ? win.id : 1;
   const child = activeTerminalProcesses.get(winId);
@@ -943,7 +1137,7 @@ ipcMain.handle('terminal:writeInput', (event, input) => {
   return false;
 });
 
-ipcMain.handle('terminal:kill', (event) => {
+handleTrusted('terminal:kill', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const winId = win ? win.id : 1;
   const child = activeTerminalProcesses.get(winId);
@@ -964,7 +1158,7 @@ ipcMain.handle('terminal:kill', (event) => {
 
 const activePtySessions = new Map();
 
-ipcMain.handle('terminal:spawnPty', (event, { cols, rows, cwd }) => {
+handleTrusted('terminal:spawnPty', (event, { cols, rows, cwd }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const winId = win ? win.id : 1;
 
@@ -1017,7 +1211,7 @@ ipcMain.handle('terminal:spawnPty', (event, { cols, rows, cwd }) => {
   }
 });
 
-ipcMain.handle('terminal:writePty', (event, data) => {
+handleTrusted('terminal:writePty', (event, data) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const winId = win ? win.id : 1;
   const ptyProcess = activePtySessions.get(winId);
@@ -1026,7 +1220,7 @@ ipcMain.handle('terminal:writePty', (event, data) => {
   }
 });
 
-ipcMain.handle('terminal:resizePty', (event, { cols, rows }) => {
+handleTrusted('terminal:resizePty', (event, { cols, rows }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const winId = win ? win.id : 1;
   const ptyProcess = activePtySessions.get(winId);
@@ -1037,7 +1231,7 @@ ipcMain.handle('terminal:resizePty', (event, { cols, rows }) => {
   }
 });
 
-ipcMain.handle('terminal:killPty', (event) => {
+handleTrusted('terminal:killPty', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const winId = win ? win.id : 1;
   const ptyProcess = activePtySessions.get(winId);
@@ -1265,13 +1459,13 @@ async function startLspServer(event, languageId, rootPath) {
   return server;
 }
 
-ipcMain.handle('lsp:getServers', () => Object.fromEntries(Object.entries(LSP_SERVER_CONFIGS).map(([languageId, config]) => [languageId, {
+handleTrusted('lsp:getServers', () => Object.fromEntries(Object.entries(LSP_SERVER_CONFIGS).map(([languageId, config]) => [languageId, {
   label: config.label,
   command: config.command,
   args: config.args
 }])));
 
-ipcMain.handle('lsp:start', async (event, payload = {}) => {
+handleTrusted('lsp:start', async (event, payload = {}) => {
   try {
     const server = await startLspServer(event, payload.languageId, payload.rootPath);
     return { success: true, sessionId: server.id, capabilities: server.capabilities, server: server.config.label };
@@ -1280,23 +1474,58 @@ ipcMain.handle('lsp:start', async (event, payload = {}) => {
   }
 });
 
-ipcMain.handle('lsp:request', async (event, { sessionId, method, params } = {}) => {
-  const server = [...lspServers.values()].find(item => item.id === sessionId);
+handleTrusted('lsp:request', async (event, { sessionId, method, params } = {}) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const server = [...lspServers.values()].find(item => item.id === sessionId && item.winId === win?.id);
   if (!server) throw new Error('Language server session not found');
   return requestLspServer(server, method, params);
 });
 
-ipcMain.handle('lsp:notify', (event, { sessionId, method, params } = {}) => {
-  const server = [...lspServers.values()].find(item => item.id === sessionId);
+handleTrusted('lsp:notify', (event, { sessionId, method, params } = {}) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const server = [...lspServers.values()].find(item => item.id === sessionId && item.winId === win?.id);
   if (!server) return false;
   notifyLspServer(server, method, params);
   return true;
 });
 
-ipcMain.handle('lsp:stop', (event, { sessionId } = {}) => {
-  const server = [...lspServers.values()].find(item => item.id === sessionId);
+handleTrusted('lsp:stop', (event, { sessionId } = {}) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const server = [...lspServers.values()].find(item => item.id === sessionId && item.winId === win?.id);
   if (server) stopLspServer(server);
   return true;
+});
+
+// --- Developer signing key and plugin management IPC handlers ---
+handleTrusted('developer:migrateKey', async (event, keyData) => {
+  if (Buffer.byteLength(JSON.stringify(keyData || {}), 'utf8') > 64 * 1024) {
+    return { success: false, reason: 'invalid-key' };
+  }
+  if (await readDeveloperKeyData()) return { success: false, reason: 'already-migrated' };
+  if (!await validateDeveloperKeyData(keyData)) return { success: false, reason: 'invalid-key' };
+  await persistDeveloperKeyPair(keyData);
+  return { success: true };
+});
+
+handleTrusted('developer:getPublicKey', async () => {
+  const { publicKeyJwk } = await getOrCreateDeveloperKeyData();
+  return publicKeyJwk;
+});
+
+handleTrusted('developer:sign', async (event, data) => {
+  if (typeof data !== 'string' || Buffer.byteLength(data, 'utf8') > 2 * 1024 * 1024) {
+    throw new Error('Invalid signing payload');
+  }
+  const { privateKeyJwk } = await getOrCreateDeveloperKeyData();
+  const privateKey = await webcrypto.subtle.importKey(
+    'jwk', privateKeyJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']
+  );
+  const signature = await webcrypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    privateKey,
+    Buffer.from(data, 'utf8')
+  );
+  return Buffer.from(signature).toString('base64');
 });
 
 // --- Plugin Management IPC Handlers ---
@@ -1308,22 +1537,60 @@ async function ensurePluginsDir() {
   return pluginsDir;
 }
 
-ipcMain.handle('plugin:getDir', async () => {
+async function resolvePluginDir(pluginsDir, pluginId) {
+  if (!isValidPluginId(pluginId)) throw new Error('Invalid plugin ID');
+  const canonicalRoot = await canonicalizePath(pluginsDir);
+  const canonicalPluginDir = await canonicalizePath(path.join(pluginsDir, pluginId));
+  if (!isPathWithin(canonicalRoot, canonicalPluginDir) || canonicalRoot === canonicalPluginDir) {
+    throw new Error('Plugin path escapes the plugin directory');
+  }
+  return canonicalPluginDir;
+}
+
+async function verifyPluginManifestSignature(pluginData, pluginDir) {
+  if (typeof pluginData.code !== 'string' || typeof pluginData.version !== 'string' || typeof pluginData.signature !== 'string') {
+    return false;
+  }
+
+  let verificationJwk = pluginData.publicKeyJwk;
+  try {
+    const installedManifest = JSON.parse(await fs.readFile(path.join(pluginDir, 'plugin.json'), 'utf-8'));
+    verificationJwk = installedManifest.publicKeyJwk;
+  } catch (error) {
+    if (error.code !== 'ENOENT') return false;
+  }
+  if (!verificationJwk) return false;
+
+  try {
+    const publicKey = await webcrypto.subtle.importKey(
+      'jwk', verificationJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']
+    );
+    const signedData = Buffer.from(`${pluginData.id}:${pluginData.version}:${pluginData.code}`, 'utf8');
+    const signature = Buffer.from(pluginData.signature, 'base64');
+    return webcrypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' }, publicKey, signature, signedData
+    );
+  } catch (error) {
+    return false;
+  }
+}
+
+handleTrusted('plugin:getDir', async () => {
   return await ensurePluginsDir();
 });
 
-ipcMain.handle('plugin:getInstalled', async () => {
+handleTrusted('plugin:getInstalled', async () => {
   const pluginsDir = await ensurePluginsDir();
   const installed = [];
   try {
     const entries = await fs.readdir(pluginsDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && isValidPluginId(entry.name)) {
         const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json');
         try {
           const content = await fs.readFile(manifestPath, 'utf-8');
           const data = JSON.parse(content);
-          installed.push(data);
+          if (data.id === entry.name && isValidPluginId(data.id)) installed.push(data);
         } catch (e) {}
       }
     }
@@ -1333,25 +1600,32 @@ ipcMain.handle('plugin:getInstalled', async () => {
   return installed;
 });
 
-ipcMain.handle('plugin:install', async (event, pluginData) => {
-  if (!pluginData || !pluginData.id) return { success: false, error: 'Invalid plugin data' };
+handleTrusted('plugin:install', async (event, pluginData) => {
+  if (!pluginData || !isValidPluginId(pluginData.id)) return { success: false, error: 'Invalid plugin ID' };
+  const serializedPlugin = JSON.stringify(pluginData, null, 2);
+  if (Buffer.byteLength(serializedPlugin, 'utf8') > 1024 * 1024) {
+    return { success: false, error: 'Plugin manifest exceeds the 1 MB limit' };
+  }
   const pluginsDir = await ensurePluginsDir();
-  const pluginDir = path.join(pluginsDir, pluginData.id);
+  const pluginDir = await resolvePluginDir(pluginsDir, pluginData.id);
+  if (!await verifyPluginManifestSignature(pluginData, pluginDir)) {
+    return { success: false, error: 'Plugin signature verification failed' };
+  }
   try {
     await fs.mkdir(pluginDir, { recursive: true });
     const manifestPath = path.join(pluginDir, 'plugin.json');
-    await fs.writeFile(manifestPath, JSON.stringify(pluginData, null, 2), 'utf-8');
+    await fs.writeFile(manifestPath, serializedPlugin, { encoding: 'utf-8', mode: 0o600 });
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
 });
 
-ipcMain.handle('plugin:uninstall', async (event, pluginId) => {
-  if (!pluginId) return { success: false, error: 'Invalid plugin ID' };
+handleTrusted('plugin:uninstall', async (event, pluginId) => {
+  if (!isValidPluginId(pluginId)) return { success: false, error: 'Invalid plugin ID' };
   const pluginsDir = await ensurePluginsDir();
-  const pluginDir = path.join(pluginsDir, pluginId);
   try {
+    const pluginDir = await resolvePluginDir(pluginsDir, pluginId);
     await fs.rm(pluginDir, { recursive: true, force: true });
     return { success: true };
   } catch (err) {
@@ -1380,7 +1654,7 @@ function validatePluginSecretPayload(payload) {
     && typeof payload.key === 'string' && payload.key.length > 0 && payload.key.length < 200;
 }
 
-ipcMain.handle('plugin:getSecret', async (event, payload) => {
+handleTrusted('plugin:getSecret', async (event, payload) => {
   if (!validatePluginSecretPayload(payload)) return null;
   if (!safeStorage.isEncryptionAvailable()) return null;
   const secrets = await readPluginSecrets();
@@ -1394,7 +1668,7 @@ ipcMain.handle('plugin:getSecret', async (event, payload) => {
   }
 });
 
-ipcMain.handle('plugin:setSecret', async (event, payload) => {
+handleTrusted('plugin:setSecret', async (event, payload) => {
   if (!validatePluginSecretPayload(payload)) return { success: false, error: 'Invalid secret key' };
   if (!safeStorage.isEncryptionAvailable()) return { success: false, error: 'OS credential storage is unavailable' };
   const secrets = await readPluginSecrets();
@@ -1404,7 +1678,7 @@ ipcMain.handle('plugin:setSecret', async (event, payload) => {
   return { success: true };
 });
 
-ipcMain.handle('plugin:deleteSecret', async (event, payload) => {
+handleTrusted('plugin:deleteSecret', async (event, payload) => {
   if (!validatePluginSecretPayload(payload)) return { success: false, error: 'Invalid secret key' };
   const secrets = await readPluginSecrets();
   delete secrets[`${payload.pluginId}:${payload.key}`];
