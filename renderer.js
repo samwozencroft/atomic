@@ -660,7 +660,7 @@ async function renderTree(path, container, indent) {
         item.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            showContextMenu(e.pageX, e.pageY, entry.path, entry.isDirectory);
+            showContextMenu(e.clientX, e.clientY, entry.path, entry.isDirectory);
         });
         
         container.appendChild(node);
@@ -746,9 +746,24 @@ function showContextMenu(x, y, targetPath, isDir) {
         });
         contextMenu.appendChild(menuItem);
     }
-    contextMenu.style.left = `${x}px`;
-    contextMenu.style.top = `${y}px`;
+
+    const viewportMargin = 8;
+    const statusBar = document.getElementById('status-bar');
+    const statusBarTop = statusBar?.getBoundingClientRect().top ?? window.innerHeight;
+
+    contextMenu.style.left = '0px';
+    contextMenu.style.top = '0px';
     contextMenu.classList.add('active');
+
+    const menuRect = contextMenu.getBoundingClientRect();
+    const maxLeft = Math.max(viewportMargin, window.innerWidth - menuRect.width - viewportMargin);
+    const maxTop = Math.max(viewportMargin, statusBarTop - menuRect.height - viewportMargin);
+    const preferredTop = y + menuRect.height + viewportMargin > statusBarTop
+        ? y - menuRect.height
+        : y;
+
+    contextMenu.style.left = `${Math.min(Math.max(x, viewportMargin), maxLeft)}px`;
+    contextMenu.style.top = `${Math.min(Math.max(preferredTop, viewportMargin), maxTop)}px`;
 }
 
 document.addEventListener('click', () => {
@@ -1120,7 +1135,7 @@ function renderTabs() {
             el.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                showContextMenu(e.pageX, e.pageY, tab.path, false);
+                showContextMenu(e.clientX, e.clientY, tab.path, false);
             });
 
             el.addEventListener('dragstart', (e) => {

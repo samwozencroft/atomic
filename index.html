@@ -279,10 +279,10 @@
 
     <!-- Prompt Modal -->
     <div id="prompt-modal" class="hidden" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 3000; display: flex; align-items: center; justify-content: center;">
-      <div class="settings-content" style="width: 350px; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 15px;">
-        <h3 id="prompt-message" style="margin-top: 0; color: var(--text-normal);">Prompt</h3>
+      <div class="settings-content dialog-content" style="background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 15px;">
+        <h3 id="prompt-message" class="dialog-message" style="margin-top: 0; color: var(--text-normal);">Prompt</h3>
         <input type="text" id="prompt-input" style="width: 100%; padding: 8px; margin-bottom: 15px; background: var(--bg-darkest); color: var(--text-normal); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
-        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <div class="dialog-actions">
           <button id="prompt-cancel" class="btn" style="background: transparent; color: var(--text-normal); border: 1px solid var(--border-color);">Cancel</button>
           <button id="prompt-ok" class="btn" style="background: var(--accent-blue); color: #fff; border: none;">OK</button>
         </div>
@@ -291,9 +291,9 @@
 
     <!-- Confirm Modal -->
     <div id="confirm-modal" class="hidden" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 3000; display: flex; align-items: center; justify-content: center;">
-      <div class="settings-content" style="width: 350px; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 15px;">
-        <h3 id="confirm-message" style="margin-top: 0; color: var(--text-normal); margin-bottom: 20px;">Confirm</h3>
-        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+      <div class="settings-content dialog-content" style="background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 15px;">
+        <h3 id="confirm-message" class="dialog-message" style="margin-top: 0; color: var(--text-normal); margin-bottom: 20px;">Confirm</h3>
+        <div class="dialog-actions">
           <button id="confirm-cancel" class="btn" style="background: transparent; color: var(--text-normal); border: 1px solid var(--border-color);">Cancel</button>
           <button id="confirm-ok" class="btn" style="background: #e06c75; color: #fff; border: none;">OK</button>
         </div>

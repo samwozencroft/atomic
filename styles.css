@@ -493,7 +493,7 @@ mark.search-highlight {
 
 /* Context Menu */
 #context-menu {
-  position: absolute;
+  position: fixed;
   background-color: var(--menu-bg);
   border: 1px solid var(--border-color);
   box-shadow: 0 4px 6px rgba(0,0,0,0.3);
@@ -502,6 +502,9 @@ mark.search-highlight {
   z-index: 1000;
   display: none;
   min-width: 150px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
 
 #context-menu.active {
@@ -907,6 +910,28 @@ mark.search-highlight {
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
+}
+
+.dialog-content {
+  box-sizing: border-box;
+  width: min(700px, calc(100vw - 32px));
+}
+
+.dialog-message {
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.25;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 20px;
+}
+
+.dialog-actions .btn {
+  flex: 1 1 0;
+  min-width: 120px;
 }
 
 .is-modified::after {
