@@ -31,6 +31,23 @@ test('renderer policy blocks eval and inline event handlers', () => {
   assert.doesNotMatch(renderer, /\bnew Function\s*\(|\beval\s*\(/);
 });
 
+test('marketplace code runs only in the isolated plugin host', () => {
+  const html = fs.readFileSync(path.join(projectRoot, 'index.html'), 'utf8');
+  const renderer = fs.readFileSync(path.join(projectRoot, 'renderer.js'), 'utf8');
+  const hostHtml = fs.readFileSync(path.join(projectRoot, 'plugin-host.html'), 'utf8');
+  const host = fs.readFileSync(path.join(projectRoot, 'plugin-host.js'), 'utf8');
+
+  assert.doesNotMatch(html, /unsafe-eval/);
+  assert.match(hostHtml, /script-src 'self' 'unsafe-eval'/);
+  const runtimeFrame = renderer.match(/frame\.className = 'plugin-runtime-frame';[\s\S]{0,300}?frame\.setAttribute\('sandbox', '([^']+)'\)/);
+  assert.ok(runtimeFrame, 'isolated plugin frame sandbox is configured');
+  assert.equal(runtimeFrame[1], 'allow-scripts allow-forms allow-modals');
+  assert.doesNotMatch(runtimeFrame[1], /allow-same-origin|allow-popups/);
+  assert.match(renderer, /event\.source !== frame\.contentWindow/);
+  assert.match(renderer, /message\.token !== entry\.token/);
+  assert.doesNotMatch(host, /electronAPI|\brequire\s*\(|\bprocess\./);
+});
+
 test('main process enables sandboxing and validates IPC registration', () => {
   const main = fs.readFileSync(path.join(projectRoot, 'main.js'), 'utf8');
   assert.match(main, /sandbox:\s*true/);

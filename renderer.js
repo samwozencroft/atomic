@@ -3517,37 +3517,7 @@ function createPluginContext(manifest) {
       if (!pluginTabs.values().next().value.active) tab.active = true;
       renderPluginTabs(tab.id);
       return tracked;
-    },
-    createWebview: ({ title, icon, url }) => {
-      let parsed;
-      try { parsed = new URL(url); } catch (e) { throw new Error('Webview URL must be valid'); }
-      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Webviews only support http(s) URLs');
-      return tabs.add({
-        title,
-        icon,
-        render: (container) => {
-          const frame = document.createElement('iframe');
-          frame.src = parsed.href;
-          frame.title = title || 'Plugin webview';
-          frame.setAttribute('sandbox', 'allow-forms allow-modals allow-popups allow-scripts');
-          container.appendChild(frame);
-        }
-      });
     }
-  };
-
-  const terminal = {
-    create: ({ name = 'Plugin Terminal', cwd = currentWorkspace } = {}) => ({
-      name,
-      show: () => {
-        terminalCwd = cwd || currentWorkspace || '';
-        terminalShellName.textContent = name;
-        toggleTerminal(true);
-      },
-      write: (data) => window.electronAPI.terminalWritePty(data),
-      clear: () => xtermInstance?.clear(),
-      dispose: () => {}
-    })
   };
 
   return {
@@ -3574,7 +3544,6 @@ function createPluginContext(manifest) {
     menus,
     editor: editorApi,
     notifications: { show: showPluginNotification },
-    terminal,
     files,
     settings,
     secrets,
@@ -3583,31 +3552,292 @@ function createPluginContext(manifest) {
     addStatusBarItem: statusBar.addItem,
     addContextMenuItem: menus.addContextMenuItem,
     addEditorDecorations: editorApi.addDecorations,
-    createTerminal: terminal.create,
     registerFileProvider: files.registerProvider,
     addTab: tabs.add,
-    createWebview: tabs.createWebview,
     notify: showPluginNotification
   };
 }
 
+function pluginRuntimeCapabilities(manifest) {
+  const declared = Array.isArray(manifest.permissions) ? manifest.permissions : [];
+  return new Set(declared.length ? declared : ['editor']);
+}
+
+function disablePluginId(pluginId) {
+  setEnabledPluginIds(getEnabledPluginIds().filter(id => id !== pluginId));
+}
+
+function pluginPathIsInWorkspace(filePath) {
+  if (!currentWorkspace || typeof filePath !== 'string') return false;
+  const root = currentWorkspace.replace(/\\/g, '/').replace(/\/$/, '');
+  const target = filePath.replace(/\\/g, '/');
+  return target === root || target.startsWith(`${root}/`);
+}
+
+function pluginRuntimeToken() {
+  return crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-');
+}
+
+function sendToPluginHost(entry, message) {
+  entry.frame.contentWindow?.postMessage({ channel: 'atomic-plugin-host', token: entry.token, ...message }, '*');
+}
+
+function invokePluginHostCallback(entry, callbackId, args = [], dom = false) {
+  if (!callbackId) return Promise.resolve(undefined);
+  const invocationId = `${entry.manifest.id}:invoke:${++entry.invocationSequence}`;
+  sendToPluginHost(entry, { type: 'invoke', invocationId, callbackId, args, dom });
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      entry.pendingInvocations.delete(invocationId);
+      reject(new Error('Plugin callback timed out'));
+    }, 15000);
+    entry.pendingInvocations.set(invocationId, { resolve, reject, timeout });
+  });
+}
+
+function addPluginRegistration(entry, message) {
+  const safeText = (value, max = 200) => String(value || '').slice(0, max);
+  const callbacks = message.callbacks || {};
+  let handle = disposable(() => {});
+
+  if (message.kind === 'sidebar') {
+    entry.viewTitle = safeText(message.data?.title) || entry.manifest.name;
+    entry.viewRenderer = (container) => {
+      container.replaceChildren(entry.frame);
+      entry.frame.style.display = 'block';
+      invokePluginHostCallback(entry, callbacks.render, [], true).catch(error => {
+        container.textContent = `Plugin view error: ${error.message}`;
+      });
+    };
+    handle = disposable(() => { entry.viewRenderer = null; });
+  } else if (message.kind === 'command' && message.data?.id && callbacks.handler) {
+    const commandId = `${entry.manifest.id}.${safeText(message.data.id, 100)}`;
+    pluginCommands.set(commandId, {
+      id: commandId,
+      title: safeText(message.data.title) || message.data.id,
+      keybinding: safeText(message.data.keybinding, 80),
+      handler: (...args) => invokePluginHostCallback(entry, callbacks.handler, args)
+    });
+    handle = disposable(() => pluginCommands.delete(commandId));
+  } else if (message.kind === 'status') {
+    const alignment = message.data?.alignment === 'right' ? 'right' : 'left';
+    const host = document.getElementById(alignment === 'right' ? 'plugin-status-right' : 'plugin-status-left');
+    const item = document.createElement('span');
+    item.className = 'plugin-status-item';
+    item.textContent = safeText(message.data?.text);
+    item.title = safeText(message.data?.tooltip, 500);
+    item.dataset.priority = String(Number(message.data?.priority) || 0);
+    if (callbacks.onClick) item.addEventListener('click', () => invokePluginHostCallback(entry, callbacks.onClick).catch(console.error));
+    host?.appendChild(item);
+    handle = disposable(() => item.remove());
+  } else if (message.kind === 'context-menu' && message.data?.id && callbacks.onClick) {
+    const menuId = `${entry.manifest.id}.${safeText(message.data.id, 100)}`;
+    pluginContextMenuItems.set(menuId, {
+      id: menuId,
+      label: safeText(message.data.label),
+      onClick: target => invokePluginHostCallback(entry, callbacks.onClick, [target])
+    });
+    handle = disposable(() => pluginContextMenuItems.delete(menuId));
+  } else if (message.kind === 'tab' && callbacks.render) {
+    const tabId = `${entry.manifest.id}.tab.${++pluginTabSequence}`;
+    const tab = {
+      id: tabId,
+      pluginId: entry.manifest.id,
+      title: safeText(message.data?.title) || entry.manifest.name,
+      icon: safeText(message.data?.icon, 20),
+      active: false,
+      render: container => {
+        container.replaceChildren(entry.frame);
+        entry.frame.style.display = 'block';
+        invokePluginHostCallback(entry, callbacks.render, [], true).catch(error => {
+          container.textContent = `Plugin tab error: ${error.message}`;
+        });
+      }
+    };
+    pluginTabs.set(tabId, tab);
+    handle = disposable(() => {
+      pluginTabs.delete(tabId);
+      renderPluginTabs();
+    });
+  }
+
+  entry.registrations.set(message.registrationId, handle);
+  entry.disposables.add(handle);
+}
+
+async function handlePluginHostRequest(entry, message) {
+  const [first, second] = Array.isArray(message.args) ? message.args : [];
+  const capabilities = entry.capabilities;
+  const activeEditor = activeEditorPane === 'left' ? editor : editorRight;
+
+  switch (message.method) {
+    case 'notify':
+      showPluginNotification(String(first || ''), second || {});
+      return true;
+    case 'editor.getValue':
+      if (!capabilities.has('editor')) throw new Error('Plugin lacks editor permission');
+      return activeEditor?.getValue() || '';
+    case 'editor.setValue':
+      if (!capabilities.has('editor')) throw new Error('Plugin lacks editor permission');
+      if (typeof first !== 'string' || first.length > 10_000_000) throw new Error('Invalid editor content');
+      activeEditor?.setValue(first);
+      return true;
+    case 'editor.addDecorations':
+      if (!capabilities.has('editor')) throw new Error('Plugin lacks editor permission');
+      if (!Array.isArray(first) || first.length > 5000) throw new Error('Invalid decorations');
+      activeEditor?.deltaDecorations([], first);
+      return true;
+    case 'file.open':
+      if (!capabilities.has('workspace:read') || !pluginPathIsInWorkspace(first)) throw new Error('Plugin cannot open this path');
+      await openFile(first, safeTextFileName(second || first));
+      return true;
+    case 'files.read':
+      if (!capabilities.has('workspace:read') || !pluginPathIsInWorkspace(first)) throw new Error('Plugin cannot read this path');
+      return window.electronAPI.readFile(first);
+    case 'files.write':
+      if (!capabilities.has('workspace:write') || !pluginPathIsInWorkspace(first)) throw new Error('Plugin cannot write this path');
+      if (typeof second !== 'string' || second.length > 10_000_000) throw new Error('Invalid file content');
+      return window.electronAPI.writeFile(first, second);
+    case 'secrets.get':
+      if (!capabilities.has('secrets')) throw new Error('Plugin lacks secrets permission');
+      return window.electronAPI.pluginGetSecret({ pluginId: entry.manifest.id, key: String(first) });
+    case 'secrets.set':
+      if (!capabilities.has('secrets')) throw new Error('Plugin lacks secrets permission');
+      return window.electronAPI.pluginSetSecret({ pluginId: entry.manifest.id, key: String(first), value: String(second ?? '') });
+    case 'secrets.delete':
+      if (!capabilities.has('secrets')) throw new Error('Plugin lacks secrets permission');
+      return window.electronAPI.pluginDeleteSecret({ pluginId: entry.manifest.id, key: String(first) });
+    case 'settings.save':
+      if (!first || typeof first !== 'object' || JSON.stringify(first).length > 100_000) throw new Error('Invalid settings');
+      localStorage.setItem(`atomic_plugin_settings_${entry.manifest.id}`, JSON.stringify(first));
+      return true;
+    case 'storage.save':
+      if (!first || typeof first !== 'object' || JSON.stringify(first).length > 250_000) throw new Error('Invalid plugin storage');
+      return window.electronAPI.pluginSetSecret({
+        pluginId: entry.manifest.id,
+        key: 'legacy-storage',
+        value: JSON.stringify(first)
+      });
+    case 'command.execute': {
+      const commandId = String(first || '');
+      if (!commandId.startsWith(`${entry.manifest.id}.`)) throw new Error('Plugins may only execute their own commands');
+      return executePluginCommand(commandId, ...(Array.isArray(second) ? second : []));
+    }
+    default:
+      throw new Error(`Unsupported plugin capability: ${message.method}`);
+  }
+}
+
+function safeTextFileName(filePath) {
+  return String(filePath || '').split(/[\\/]/).pop() || 'untitled';
+}
+
 async function activatePlugin(manifest) {
-  console.warn(`Plugin activation blocked for ${manifest?.id || 'unknown plugin'}: isolated plugin runtime is not available.`);
-  return false;
+  if (!manifest?.id || !isValidPluginId(manifest.id)) return false;
+  if (activePluginsMap.has(manifest.id)) return true;
+  const frame = document.createElement('iframe');
+  frame.className = 'plugin-runtime-frame';
+  frame.title = `${manifest.name || manifest.id} plugin`;
+  frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals');
+  frame.style.display = 'none';
+
+  const entry = {
+    manifest,
+    frame,
+    token: pluginRuntimeToken(),
+    capabilities: pluginRuntimeCapabilities(manifest),
+    registrations: new Map(),
+    disposables: new Set(),
+    pendingInvocations: new Map(),
+    invocationSequence: 0,
+    viewTitle: manifest.name,
+    viewRenderer: null
+  };
+  activePluginsMap.set(manifest.id, entry);
+
+  const activation = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Plugin activation timed out')), 15000);
+    entry.onMessage = async (event) => {
+      const message = event.data;
+      if (event.source !== frame.contentWindow || message?.channel !== 'atomic-plugin'
+          || message.token !== entry.token || message.pluginId !== manifest.id) return;
+
+      if (message.type === 'activated') {
+        clearTimeout(timeout);
+        resolve(true);
+      } else if (message.type === 'activation-error') {
+        clearTimeout(timeout);
+        reject(new Error(message.error?.message || 'Plugin activation failed'));
+      } else if (message.type === 'register') {
+        addPluginRegistration(entry, message);
+      } else if (message.type === 'unregister') {
+        entry.registrations.get(message.registrationId)?.dispose();
+        entry.registrations.delete(message.registrationId);
+      } else if (message.type === 'request') {
+        try {
+          const result = await handlePluginHostRequest(entry, message);
+          sendToPluginHost(entry, { type: 'response', requestId: message.requestId, result });
+        } catch (error) {
+          sendToPluginHost(entry, { type: 'response', requestId: message.requestId, error: { message: error.message } });
+        }
+      } else if (message.type === 'callback-result') {
+        const pending = entry.pendingInvocations.get(message.invocationId);
+        if (!pending) return;
+        clearTimeout(pending.timeout);
+        entry.pendingInvocations.delete(message.invocationId);
+        if (message.error) pending.reject(new Error(message.error.message));
+        else pending.resolve(message.result);
+      }
+    };
+    window.addEventListener('message', entry.onMessage);
+  });
+
+  try {
+    document.body.appendChild(frame);
+    await new Promise((resolve, reject) => {
+      frame.addEventListener('load', resolve, { once: true });
+      frame.addEventListener('error', () => reject(new Error('Plugin host failed to load')), { once: true });
+      frame.src = 'plugin-host.html';
+    });
+    const settings = JSON.parse(localStorage.getItem(`atomic_plugin_settings_${manifest.id}`) || '{}');
+    const legacyRaw = await window.electronAPI.pluginGetSecret({ pluginId: manifest.id, key: 'legacy-storage' });
+    let legacyStorage = {};
+    try { legacyStorage = legacyRaw ? JSON.parse(legacyRaw) : {}; } catch (error) {}
+    sendToPluginHost(entry, {
+      type: 'init',
+      manifest: { id: manifest.id, name: manifest.name, version: manifest.version },
+      code: manifest.code || '',
+      initialState: { workspace: currentWorkspace, settings, legacyStorage }
+    });
+    await activation;
+    renderActivityBarPluginIcons();
+    renderSidebarInstalledPlugins();
+    return true;
+  } catch (error) {
+    console.error(`Failed to activate plugin ${manifest.id}:`, error);
+    deactivatePlugin(manifest.id);
+    showPluginNotification(error.message, { title: manifest.name || manifest.id, type: 'error' });
+    return false;
+  }
 }
 
 function deactivatePlugin(pluginId) {
   const entry = activePluginsMap.get(pluginId);
   if (entry) {
-    if (entry.instance && typeof entry.instance.onDeactivate === 'function') {
-      try { entry.instance.onDeactivate(); } catch (e) {}
-    }
+    sendToPluginHost(entry, { type: 'deactivate' });
     if (entry.disposables) {
       [...entry.disposables].reverse().forEach(item => {
         try { item.dispose(); } catch (e) {}
       });
       entry.disposables.clear();
     }
+    for (const pending of entry.pendingInvocations.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('Plugin deactivated'));
+    }
+    entry.pendingInvocations.clear();
+    window.removeEventListener('message', entry.onMessage);
+    entry.frame.remove();
     activePluginsMap.delete(pluginId);
     renderActivityBarPluginIcons();
     renderSidebarInstalledPlugins();
@@ -3709,7 +3939,14 @@ async function loadInstalledPlugins() {
     }
   }
 
-  setEnabledPluginIds([]);
+  let enabledIds = getEnabledPluginIds().filter(id => installed.some(plugin => plugin.id === id));
+  setEnabledPluginIds(enabledIds);
+  for (const plugin of installed) {
+    if (enabledIds.includes(plugin.id) && !await activatePlugin(plugin)) {
+      enabledIds = enabledIds.filter(id => id !== plugin.id);
+    }
+  }
+  setEnabledPluginIds(enabledIds);
 
   renderActivityBarPluginIcons();
   renderSidebarInstalledPlugins();
@@ -3743,7 +3980,7 @@ async function renderSidebarInstalledPlugins() {
           <span>${escapeHtml(plugin.icon || '🧩')}</span>
           <span>${escapeHtml(plugin.name)}</span>
         </div>
-        <input type="checkbox" class="sidebar-plugin-toggle" data-id="${escapeHtml(plugin.id)}" disabled title="Plugin runtime disabled pending sandboxing">
+        <input type="checkbox" class="sidebar-plugin-toggle" data-id="${escapeHtml(plugin.id)}" ${isEnabled ? 'checked' : ''}>
       </div>
       <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(plugin.description || '')}</div>
       ${isEnabled ? `<button class="btn sidebar-open-plugin-btn" data-id="${escapeHtml(plugin.id)}" style="margin-top: 4px; font-size: 11px; padding: 3px 8px;">Open View</button>` : ''}
@@ -3751,16 +3988,22 @@ async function renderSidebarInstalledPlugins() {
 
     const toggle = card.querySelector('.sidebar-plugin-toggle');
     if (toggle) {
-      toggle.addEventListener('change', (e) => {
+      toggle.addEventListener('change', async (e) => {
+        e.target.disabled = true;
         let currentEnabled = getEnabledPluginIds();
         if (e.target.checked) {
-          if (!currentEnabled.includes(plugin.id)) currentEnabled.push(plugin.id);
-          activatePlugin(plugin);
+          if (await activatePlugin(plugin)) {
+            if (!currentEnabled.includes(plugin.id)) currentEnabled.push(plugin.id);
+          } else {
+            e.target.checked = false;
+          }
         } else {
           currentEnabled = currentEnabled.filter(id => id !== plugin.id);
           deactivatePlugin(plugin.id);
         }
         setEnabledPluginIds(currentEnabled);
+        e.target.disabled = false;
+        await renderSidebarInstalledPlugins();
       });
     }
 
@@ -4066,7 +4309,7 @@ async function renderInstalledModalList() {
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <label style="font-size: 11px; color: var(--text-muted);">Enabled</label>
-          <input type="checkbox" class="modal-plugin-toggle" data-id="${escapeHtml(plugin.id)}" disabled title="Plugin runtime disabled pending sandboxing">
+          <input type="checkbox" class="modal-plugin-toggle" data-id="${escapeHtml(plugin.id)}" ${isEnabled ? 'checked' : ''}>
         </div>
       </div>
       <div class="plugin-card-desc">${escapeHtml(plugin.description || '')}</div>
@@ -4083,15 +4326,20 @@ async function renderInstalledModalList() {
     const toggle = card.querySelector('.modal-plugin-toggle');
     if (toggle) {
       toggle.addEventListener('change', async (e) => {
+        e.target.disabled = true;
         let currentEnabled = getEnabledPluginIds();
         if (e.target.checked) {
-          if (!currentEnabled.includes(plugin.id)) currentEnabled.push(plugin.id);
-          await activatePlugin(plugin);
+          if (await activatePlugin(plugin)) {
+            if (!currentEnabled.includes(plugin.id)) currentEnabled.push(plugin.id);
+          } else {
+            e.target.checked = false;
+          }
         } else {
           currentEnabled = currentEnabled.filter(id => id !== plugin.id);
           deactivatePlugin(plugin.id);
         }
         setEnabledPluginIds(currentEnabled);
+        e.target.disabled = false;
         renderSidebarInstalledPlugins();
       });
     }
@@ -4295,10 +4543,14 @@ async function installPlugin(plugin) {
       const installResult = await window.electronAPI.pluginInstall(fullPlugin);
       if (!installResult?.success) throw new Error(installResult?.error || 'Plugin installation failed');
     }
-    // Manifests may be installed, but code is not activated until plugins run
-    // in a separate, capability-limited process.
     deactivatePlugin(fullPlugin.id);
-    setEnabledPluginIds(getEnabledPluginIds().filter(id => id !== fullPlugin.id));
+    const enabledIds = getEnabledPluginIds();
+    if (!await activatePlugin(fullPlugin)) {
+      disablePluginId(fullPlugin.id);
+      throw new Error('Plugin installed, but its isolated runtime failed to start');
+    }
+    if (!enabledIds.includes(fullPlugin.id)) enabledIds.push(fullPlugin.id);
+    setEnabledPluginIds(enabledIds);
     renderSidebarInstalledPlugins();
     renderActivityBarPluginIcons();
   } catch (err) {

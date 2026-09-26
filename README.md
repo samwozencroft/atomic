@@ -61,6 +61,7 @@ A plugin consists of a manifest (`plugin.json`) and an entry script (`plugin.js`
   "author": "Your Name",
   "description": "Browse and manage cloud resources directly from Atomic.",
   "icon": "☁️",
+  "permissions": ["editor", "workspace:read"],
   "entry": "plugin.js"
 }
 ```
@@ -78,9 +79,9 @@ exports.onActivate = function(context) {
           <button id="load-btn" class="btn">Load Resources</button>
         </div>
       `;
-      container.querySelector('#load-btn').onclick = () => {
+      container.querySelector('#load-btn').onclick = async () => {
         const editor = context.getEditor();
-        editor.setValue('// Loaded from plugin');
+        await editor.setValue('// Loaded from plugin');
       };
     }
   });
@@ -113,7 +114,7 @@ exports.onActivate = function(context) {
 
   context.editor.addDecorations({
     decorations: [{
-      range: new monaco.Range(1, 1, 1, 1),
+      range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
       options: { isWholeLine: true, className: 'plugin-highlight' }
     }]
   });
@@ -128,9 +129,9 @@ exports.onActivate = function(context) {
 };
 ```
 
-The available API groups are `commands`, `statusBar`, `menus`, `editor`, `notifications`, `terminal`, `files`, `settings`, `secrets`, and `tabs`. The shorter aliases `addCommand`, `addStatusBarItem`, `addContextMenuItem`, `addEditorDecorations`, `createTerminal`, `registerFileProvider`, `addTab`, `createWebview`, and `notify` are also available. Registrations return disposable handles and are cleaned up when a plugin is disabled. Secrets are encrypted through the operating system credential store; they are not written to the plugin manifest or renderer storage.
+Marketplace code runs in a sandboxed iframe with an opaque origin. It has no Node.js, Electron, terminal, popup, or direct host-page access. Host operations cross a token-checked message bridge and require the manifest capabilities `editor`, `workspace:read`, `workspace:write`, or `secrets`. Workspace access is additionally restricted to the currently opened workspace. Plugins without a `permissions` field retain the legacy `editor` capability for compatibility.
 
-File providers can register virtual URI schemes such as `cloud://bucket/file.txt` with `context.files.registerProvider('cloud', { read, write })`. `context.tabs.createWebview({ title, url })` supports remote HTTP(S) pages in a sandboxed custom tab.
+The isolated API groups are `commands`, `statusBar`, `menus`, `editor`, `notifications`, `files`, `settings`, `secrets`, and `tabs`; `createWebview`, terminals, and custom file providers are intentionally unavailable. Bridge-backed editor, file, secret, notification, and command operations are asynchronous. Registrations return disposable handles and are cleaned up when a plugin is disabled. Secrets are encrypted through the operating system credential store.
 
 ## Language Server Protocol
 

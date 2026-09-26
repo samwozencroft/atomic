@@ -3,7 +3,7 @@ const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { execFile, spawn } = require('node:child_process');
-const { webcrypto } = require('node:crypto');
+const { webcrypto, createHash } = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const pty = require('node-pty');
 const util = require('node:util');
@@ -1548,14 +1548,25 @@ async function resolvePluginDir(pluginsDir, pluginId) {
 }
 
 async function verifyPluginManifestSignature(pluginData, pluginDir) {
-  if (typeof pluginData.code !== 'string' || typeof pluginData.version !== 'string' || typeof pluginData.signature !== 'string') {
+  if (typeof pluginData.code !== 'string' || typeof pluginData.version !== 'string') {
     return false;
+  }
+
+  // The original marketplace plugin predates signatures. Pin that exact reviewed
+  // release so it remains installable without creating a general unsigned path.
+  const legacyReleaseHashes = new Map([
+    ['atomic-s3-viewer@1.0.1', '1c9088faa1274661746f458e432bea306751422a0ca716cb568a229f5950c119']
+  ]);
+  if (!pluginData.signature) {
+    const expectedHash = legacyReleaseHashes.get(`${pluginData.id}@${pluginData.version}`);
+    const actualHash = createHash('sha256').update(pluginData.code, 'utf8').digest('hex');
+    return Boolean(expectedHash) && actualHash === expectedHash;
   }
 
   let verificationJwk = pluginData.publicKeyJwk;
   try {
     const installedManifest = JSON.parse(await fs.readFile(path.join(pluginDir, 'plugin.json'), 'utf-8'));
-    verificationJwk = installedManifest.publicKeyJwk;
+    if (installedManifest.publicKeyJwk) verificationJwk = installedManifest.publicKeyJwk;
   } catch (error) {
     if (error.code !== 'ENOENT') return false;
   }
