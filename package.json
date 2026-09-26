@@ -47,7 +47,8 @@
   "description": "A lightweight, modern text editor built on Electron 30 and Node 20.",
   "devDependencies": {
     "electron": "^44.4.5",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "node-abi": "^4.35.0"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
