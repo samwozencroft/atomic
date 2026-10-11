@@ -11,6 +11,102 @@ let xtermInstance = null;
 let xtermFitAddon = null;
 let isPtySpawned = false;
 const { escapeHtml } = window.AtomicSecurity;
+const RECENT_SESSION_KEY = 'atomic_recent_session';
+let isRestoringSession = false;
+
+function allOpenTabs() {
+    return [...openTabsLeft, ...openTabsRight];
+}
+
+function persistRecentSession() {
+    if (isRestoringSession) return;
+    const session = {
+        workspace: currentWorkspace,
+        tabsLeft: openTabsLeft,
+        tabsRight: openTabsRight,
+        activeLeft: currentFilePath,
+        activeRight: currentFilePathRight,
+        activePane: activeEditorPane
+    };
+    localStorage.setItem(RECENT_SESSION_KEY, JSON.stringify(session));
+}
+
+function readRecentSession() {
+    try {
+        const session = JSON.parse(localStorage.getItem(RECENT_SESSION_KEY) || 'null');
+        if (!session || typeof session !== 'object') return null;
+        return session;
+    } catch (error) {
+        return null;
+    }
+}
+
+function showBlankFile() {
+    document.getElementById('welcome-screen')?.classList.remove('active');
+    document.getElementById('editor-wrapper').style.display = 'flex';
+    document.getElementById('editor-column-left').style.display = 'flex';
+    document.getElementById('editor-container').style.display = 'block';
+    activeEditorPane = 'left';
+    if (editor) {
+        isSettingValue = true;
+        editor.setValue('');
+        isSettingValue = false;
+        editor.focus();
+    }
+    renderTabs();
+}
+
+async function restoreRecentSession() {
+    const session = readRecentSession();
+    if (!session || !window.electronAPI?.restoreRecentSession) {
+        showBlankFile();
+        return;
+    }
+
+    const savedTabsLeft = Array.isArray(session.tabsLeft) ? session.tabsLeft : [];
+    const savedTabsRight = Array.isArray(session.tabsRight) ? session.tabsRight : [];
+    const savedFiles = [
+        ...savedTabsLeft,
+        ...savedTabsRight,
+        session.activeLeft ? { path: session.activeLeft } : null,
+        session.activeRight ? { path: session.activeRight } : null
+    ].filter(Boolean).map(tab => tab.path).filter(Boolean);
+
+    isRestoringSession = true;
+    try {
+        const approved = await window.electronAPI.restoreRecentSession({
+            workspace: session.workspace,
+            files: [...new Set(savedFiles)]
+        });
+        const approvedFiles = new Set(approved?.files || []);
+
+        if (approved?.workspace) {
+            currentWorkspace = approved.workspace;
+            document.getElementById('welcome-screen')?.classList.remove('active');
+            document.getElementById('editor-wrapper').style.display = 'flex';
+            document.getElementById('editor-column-left').style.display = 'flex';
+            document.getElementById('editor-container').style.display = 'block';
+            await loadDirectory(approved.workspace);
+        }
+
+        openTabsLeft = savedTabsLeft.filter(tab => approvedFiles.has(tab.path));
+        openTabsRight = savedTabsRight.filter(tab => approvedFiles.has(tab.path));
+        renderTabs();
+
+        const leftTab = openTabsLeft.find(tab => tab.path === session.activeLeft) || openTabsLeft[0];
+        const rightTab = openTabsRight.find(tab => tab.path === session.activeRight) || openTabsRight[0];
+        if (leftTab) await openFile(leftTab.path, leftTab.name || fileNameFromPath(leftTab.path), 'left');
+        if (rightTab) await openFile(rightTab.path, rightTab.name || fileNameFromPath(rightTab.path), 'right');
+
+        activeEditorPane = session.activePane === 'right' && currentFilePathRight ? 'right' : 'left';
+        if (!approved?.workspace && !currentFilePath && !currentFilePathRight) {
+            showBlankFile();
+        }
+    } finally {
+        isRestoringSession = false;
+        persistRecentSession();
+    }
+}
 
 // Initialize window state if opened via tear-off
 async function initializeWindow() {
@@ -44,10 +140,12 @@ async function initializeWindow() {
                     }
                 }
             }, 50);
+            return true;
         }
     }
+    return false;
 }
-initializeWindow();
+const initialWindowStatePromise = initializeWindow();
 
 
 const modifiedFiles = new Set();
@@ -489,6 +587,9 @@ editorRight.onDidFocusEditorText(() => {
     });
 
     initializeLspClient();
+    initialWindowStatePromise.then(hasInitialWindowState => {
+        if (!hasInitialWindowState) restoreRecentSession();
+    });
 });
 
 async function saveCurrentFile() {
@@ -571,6 +672,7 @@ async function saveCurrentFile() {
         }
         
         renderTabs();
+        persistRecentSession();
     } else {
         alert('Failed to save file');
     }
@@ -588,6 +690,7 @@ document.getElementById('open-folder-btn').addEventListener('click', async () =>
         document.getElementById('editor-container').style.display = 'block';
         currentWorkspace = dirPath;
         loadDirectory(dirPath);
+        persistRecentSession();
     }
 });
 
@@ -606,6 +709,7 @@ async function loadDirectory(dirPath) {
     if (typeof renderGitModalContent === 'function' && typeof gitModal !== 'undefined' && gitModal && !gitModal.classList.contains('hidden')) {
         renderGitModalContent();
     }
+    persistRecentSession();
 }
 
 async function renderTree(path, container, indent) {
@@ -1007,6 +1111,7 @@ async function openFile(filePath, filename, pane = null) {
         if (activeTab) activeTab.classList.add('active');
 
         if (typeof updateEditorStats === 'function') updateEditorStats();
+        persistRecentSession();
 
         setTimeout(() => {
             if (editor) editor.layout();
@@ -1114,6 +1219,7 @@ function renderTabs() {
             
             // We just changed state, render again to be safe and set active correctly
             renderTabs();
+            persistRecentSession();
         };
         
         const tabsArr = pane === 'left' ? openTabsLeft : openTabsRight;
@@ -1288,6 +1394,7 @@ function closeTab(path, pane) {
     if (tabsArr.length > 0 && ((pane === 'left' && !currentFilePath) || (pane === 'right' && !currentFilePathRight))) {
         openFile(tabsArr[tabsArr.length - 1].path, tabsArr[tabsArr.length - 1].name, pane);
     }
+    persistRecentSession();
 }
 // Initialize App Version and Stats
 window.electronAPI.getVersion().then(version => {
@@ -2308,7 +2415,7 @@ window.electronAPI.onMenuAction(async (action) => {
       break;
     case 'close-others':
       if (currentFilePath) {
-        const tabsToClose = openTabs.filter(t => t.path !== currentFilePath);
+        const tabsToClose = allOpenTabs().filter(t => t.path !== currentFilePath);
         tabsToClose.forEach(t => {
           const btn = document.querySelector(`.tab[data-path="${t.path.replace(/\\/g, '\\\\')}"] .tab-close`);
           if (btn) btn.click();
@@ -2316,8 +2423,7 @@ window.electronAPI.onMenuAction(async (action) => {
       }
       break;
     case 'close-all':
-      const allTabs = [...openTabs];
-      allTabs.forEach(t => {
+      allOpenTabs().forEach(t => {
         const btn = document.querySelector(`.tab[data-path="${t.path.replace(/\\/g, '\\\\')}"] .tab-close`);
         if (btn) btn.click();
       });
@@ -2851,6 +2957,7 @@ async function createNewUntitledFile() {
     document.getElementById('editor-container-right').style.display = 'block';
   }
   renderTabs();
+  persistRecentSession();
   activeEd.focus();
 }
 

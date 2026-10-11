@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createNewWindow: (payload) => ipcRenderer.send('window:createNew', payload),
   getInitialState: () => ipcRenderer.invoke('window:getInitialState'),
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
+  restoreRecentSession: (sessionState) => ipcRenderer.invoke('app:restoreRecentSession', sessionState),
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),

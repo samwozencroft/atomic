@@ -508,6 +508,41 @@ handleTrusted('window:getInitialState', (event) => {
   return null;
 });
 
+handleTrusted('app:restoreRecentSession', async (event, sessionState) => {
+  const approvedFiles = [];
+  let approvedWorkspace = null;
+
+  if (sessionState?.workspace) {
+    try {
+      const workspacePath = await canonicalizePath(sessionState.workspace);
+      const workspaceStats = await fs.stat(workspacePath);
+      if (workspaceStats.isDirectory()) {
+        await approveRoot(event, workspacePath);
+        approvedWorkspace = workspacePath;
+      }
+    } catch (error) {
+      approvedWorkspace = null;
+    }
+  }
+
+  const filePaths = Array.isArray(sessionState?.files) ? sessionState.files : [];
+  for (const filePath of filePaths) {
+    try {
+      const canonicalFile = await canonicalizePath(filePath);
+      const fileStats = await fs.stat(canonicalFile);
+      if (!fileStats.isFile()) continue;
+      if (!approvedWorkspace || !isPathWithin(approvedWorkspace, canonicalFile)) {
+        await approveFile(event, canonicalFile);
+      }
+      approvedFiles.push(canonicalFile);
+    } catch (error) {
+      // Ignore files that moved or were deleted between app launches.
+    }
+  }
+
+  return { workspace: approvedWorkspace, files: approvedFiles };
+});
+
 // Existing IPC Handlers
 handleTrusted('dialog:openDirectory', async (event) => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
