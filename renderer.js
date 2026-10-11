@@ -2390,6 +2390,12 @@ window.electronAPI.onThemeUpdated(() => {
 // Native Menu Listeners
 window.electronAPI.onMenuAction(async (action) => {
   switch (action) {
+    case 'new-file':
+      await createNewUntitledFile();
+      break;
+    case 'find':
+      searchInCurrentFile();
+      break;
     case 'command-palette':
       openCommandPalette();
       break;
@@ -2398,19 +2404,21 @@ window.electronAPI.onMenuAction(async (action) => {
       if (file) {
         document.getElementById('welcome-screen').classList.remove('active');
         document.getElementById('editor-container').style.display = 'block';
-        openFile(file.path, file.name);
+        await openFile(file.path, file.name, activeEditorPane);
       }
       break;
     case 'open-folder':
       document.getElementById('open-folder-btn').click();
       break;
     case 'save':
-      saveCurrentFile();
+      await saveCurrentFile();
       break;
     case 'close-active':
-      if (currentFilePath) {
-        const tabCloseBtn = document.querySelector(`.tab[data-path="${currentFilePath.replace(/\\/g, '\\\\')}"] .tab-close`);
-        if (tabCloseBtn) tabCloseBtn.click();
+      {
+        const activePath = activeEditorPane === 'left' ? currentFilePath : currentFilePathRight;
+        const tabContainer = document.getElementById(`tabs-${activeEditorPane}`);
+        const activeTab = [...tabContainer.querySelectorAll('.tab')].find(tab => tab.dataset.path === activePath);
+        activeTab?.querySelector('.tab-close')?.click();
       }
       break;
     case 'close-others':

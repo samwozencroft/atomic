@@ -249,6 +249,17 @@ function createWindow(initialState = null, approvedInitialFile = null) {
   
   // Native Menu Template
   const isMac = process.platform === 'darwin';
+  // Handle app shortcuts before the editor or terminal consumes them.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || (!input.meta && !input.control) || input.alt) return;
+    const key = input.key.toLowerCase();
+    const action = input.shift
+      ? ({ o: 'open-folder', p: 'command-palette' })[key]
+      : ({ n: 'new-file', o: 'open-file', s: 'save', w: 'close-active', f: 'find' })[key];
+    if (!action) return;
+    event.preventDefault();
+    if (!input.isAutoRepeat) win.webContents.send('menu:action', action);
+  });
   const sendMenuAction = (action) => {
     const focusedWin = BrowserWindow.getFocusedWindow() || win;
     if (focusedWin && !focusedWin.isDestroyed()) {
@@ -273,6 +284,11 @@ const template = [
     {
       label: 'File',
       submenu: [
+        {
+          label: 'New File',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => sendMenuAction('new-file')
+        },
         {
           label: 'Open File...',
           accelerator: 'CmdOrCtrl+O',
@@ -303,12 +319,18 @@ const template = [
           label: 'Close All Tabs',
           click: () => sendMenuAction('close-all')
         },
-        isMac ? { role: 'close' } : { role: 'quit' }
+        isMac ? { role: 'close', accelerator: 'CmdOrCtrl+Shift+W' } : { role: 'quit' }
       ]
     },
     {
       label: 'Edit',
       submenu: [
+        {
+          label: 'Find in File...',
+          accelerator: 'CmdOrCtrl+F',
+          click: () => sendMenuAction('find')
+        },
+        { type: 'separator' },
         { role: 'undo' },
         { role: 'redo' },
         { type: 'separator' },
