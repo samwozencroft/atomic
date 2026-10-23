@@ -44,7 +44,7 @@
     "email": "samuelwozencroft@outlook.com"
   },
   "license": "ISC",
-  "description": "A lightweight, modern text editor built on Electron 30 and Node 20.",
+  "description": "A lightweight, modern text editor built on Electron and Node 24.",
   "devDependencies": {
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
